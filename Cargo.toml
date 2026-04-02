@@ -1,0 +1,15 @@
+[package]
+name = "forensic-mount"
+version = "0.1.0"
+edition = "2021"
+description = "Universal forensic FUSE mount framework with ForensicFs trait"
+license = "MIT"
+
+[dependencies]
+fuser = "0.15"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sha2 = "0.10"
+md-5 = "0.10"
+rusqlite = { version = "0.31", features = ["bundled"] }
+libc = "0.2"
