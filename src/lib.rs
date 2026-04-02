@@ -7,10 +7,37 @@ pub mod session;
 pub mod filter;
 pub mod fusefs;
 
+#[cfg(unix)]
+pub mod fuse_unix;
+pub mod fuse_windows;
+
 #[cfg(feature = "ext4")]
 pub mod fs_ext4;
 
 pub use types::*;
+
+use std::io;
+use std::path::Path;
+
+/// Mount options for the FUSE filesystem.
+///
+/// Platform-agnostic configuration consumed by both the Unix (fuser)
+/// and Windows (WinFSP) mount backends.
+pub struct MountOptions {
+    pub read_only: bool,
+    pub daemon: bool,
+    pub fs_name: String,
+}
+
+impl Default for MountOptions {
+    fn default() -> Self {
+        Self {
+            read_only: false,
+            daemon: false,
+            fs_name: "4n6mount".to_string(),
+        }
+    }
+}
 
 /// The core trait that filesystem crates implement.
 ///
@@ -83,53 +110,35 @@ pub trait ForensicFs {
     }
 }
 
-/// Mount a forensic filesystem via FUSE.
+/// Mount a forensic filesystem via FUSE (or WinFSP on Windows).
 ///
-/// This is the main entry point for consumers. Pass a `ForensicFs` implementation
-/// and mount options, and this handles the FUSE lifecycle.
+/// This is the main entry point for consumers.  Pass a `ForensicFs`
+/// implementation and a `MountOptions`, and this dispatches to the
+/// correct platform backend.
 ///
-/// When `daemon` is false (default), this blocks until the filesystem is unmounted.
-/// When `daemon` is true, the FUSE event loop runs in a background thread and this
-/// function returns immediately. The mount stays alive until the process exits or
-/// the filesystem is unmounted externally (`umount`).
+/// On Unix the mount is handled by `fuser`.  On Windows it will be
+/// handled by `winfsp-wrs` (currently a stub that returns
+/// `Unsupported`).
 pub fn mount(
     fs: Box<dyn ForensicFs + Send>,
-    mountpoint: &str,
-    session_dir: Option<&str>,
-    resume: bool,
-    _filter_dbs: &[String],
-    daemon: bool,
-) -> std::io::Result<()> {
-    let session_mgr = session_dir.map(|dir| {
-        let session_path = std::path::Path::new(dir);
-        if resume {
-            session::Session::resume(session_path, std::path::Path::new(""))
-                .expect("cannot resume session")
-        } else {
-            session::Session::create(session_path, std::path::Path::new(""))
-                .expect("cannot create session")
-        }
-    });
-
-    let fuse_fs = fusefs::ForensicFuseFs::new(fs, session_mgr);
-
-    let mut options = vec![
-        fuser::MountOption::FSName("4n6mount".to_string()),
-    ];
-    if session_dir.is_none() {
-        options.push(fuser::MountOption::RO);
+    mountpoint: &Path,
+    session: Option<session::Session>,
+    options: &MountOptions,
+) -> io::Result<()> {
+    #[cfg(unix)]
+    {
+        fuse_unix::mount_unix(fs, mountpoint, session, options)
     }
-
-    if daemon {
-        // Background mode: spawn FUSE in a thread, write PID, wait for signal
-        let _session = fuser::spawn_mount2(fuse_fs, mountpoint, &options)?;
-        eprintln!("4n6mount: mounted at {mountpoint} (daemon mode, PID {})", std::process::id());
-        // Block on signal — the mount stays alive until the process is killed
-        // or the filesystem is unmounted externally
-        loop {
-            std::thread::park();
-        }
-    } else {
-        fuser::mount2(fuse_fs, mountpoint, &options)
+    #[cfg(windows)]
+    {
+        fuse_windows::mount_windows(fs, mountpoint, session, options)
+    }
+    #[cfg(not(any(unix, windows)))]
+    {
+        let _ = (fs, mountpoint, session, options);
+        Err(io::Error::new(
+            io::ErrorKind::Unsupported,
+            "no FUSE support on this platform",
+        ))
     }
 }
