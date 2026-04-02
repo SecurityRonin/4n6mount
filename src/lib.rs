@@ -7,6 +7,9 @@ pub mod session;
 pub mod filter;
 pub mod fusefs;
 
+#[cfg(feature = "ext4")]
+pub mod fs_ext4;
+
 pub use types::*;
 
 /// The core trait that filesystem crates implement.
