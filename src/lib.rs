@@ -1,5 +1,6 @@
 #![forbid(unsafe_code)]
 
+pub mod detect;
 pub mod types;
 pub mod inode_map;
 pub mod session;
