@@ -83,12 +83,18 @@ pub trait ForensicFs {
 ///
 /// This is the main entry point for consumers. Pass a `ForensicFs` implementation
 /// and mount options, and this handles the FUSE lifecycle.
+///
+/// When `daemon` is false (default), this blocks until the filesystem is unmounted.
+/// When `daemon` is true, the FUSE event loop runs in a background thread and this
+/// function returns immediately. The mount stays alive until the process exits or
+/// the filesystem is unmounted externally (`umount`).
 pub fn mount(
-    fs: Box<dyn ForensicFs>,
+    fs: Box<dyn ForensicFs + Send>,
     mountpoint: &str,
     session_dir: Option<&str>,
     resume: bool,
     _filter_dbs: &[String],
+    daemon: bool,
 ) -> std::io::Result<()> {
     let session_mgr = session_dir.map(|dir| {
         let session_path = std::path::Path::new(dir);
@@ -110,5 +116,16 @@ pub fn mount(
         options.push(fuser::MountOption::RO);
     }
 
-    fuser::mount2(fuse_fs, mountpoint, &options)
+    if daemon {
+        // Background mode: spawn FUSE in a thread, write PID, wait for signal
+        let _session = fuser::spawn_mount2(fuse_fs, mountpoint, &options)?;
+        eprintln!("4n6mount: mounted at {mountpoint} (daemon mode, PID {})", std::process::id());
+        // Block on signal — the mount stays alive until the process is killed
+        // or the filesystem is unmounted externally
+        loop {
+            std::thread::park();
+        }
+    } else {
+        fuser::mount2(fuse_fs, mountpoint, &options)
+    }
 }

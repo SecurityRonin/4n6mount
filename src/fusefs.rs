@@ -55,7 +55,7 @@ struct UnallocatedEntry {
 }
 
 pub struct ForensicFuseFs {
-    fs: RefCell<Box<dyn ForensicFs>>,
+    fs: RefCell<Box<dyn ForensicFs + Send>>,
     session: RefCell<Option<Session>>,
     /// Counter for allocating new overlay inode numbers (for created files).
     overlay_ino_counter: RefCell<u64>,
@@ -72,7 +72,7 @@ pub struct ForensicFuseFs {
 }
 
 impl ForensicFuseFs {
-    pub fn new(fs: Box<dyn ForensicFs>, session: Option<Session>) -> Self {
+    pub fn new(fs: Box<dyn ForensicFs + Send>, session: Option<Session>) -> Self {
         let root_ino = fs.root_ino();
         Self {
             fs: RefCell::new(fs),
