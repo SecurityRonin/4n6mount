@@ -2076,4 +2076,241 @@ mod tests {
             }
         }
     }
+
+    // -----------------------------------------------------------------------
+    // MockForensicFs + FUSE dispatch tests
+    // -----------------------------------------------------------------------
+
+    struct MockForensicFs;
+
+    impl crate::ForensicFs for MockForensicFs {
+        fn root_ino(&self) -> u64 {
+            2
+        }
+
+        fn read_dir(&mut self, ino: u64) -> FsResult<Vec<FsDirEntry>> {
+            match ino {
+                2 => Ok(vec![
+                    FsDirEntry { inode: 2, name: b".".to_vec(), file_type: FsFileType::Directory },
+                    FsDirEntry { inode: 2, name: b"..".to_vec(), file_type: FsFileType::Directory },
+                    FsDirEntry { inode: 10, name: b"hello.txt".to_vec(), file_type: FsFileType::RegularFile },
+                    FsDirEntry { inode: 11, name: b"subdir".to_vec(), file_type: FsFileType::Directory },
+                ]),
+                11 => Ok(vec![
+                    FsDirEntry { inode: 11, name: b".".to_vec(), file_type: FsFileType::Directory },
+                    FsDirEntry { inode: 2, name: b"..".to_vec(), file_type: FsFileType::Directory },
+                    FsDirEntry { inode: 12, name: b"nested.txt".to_vec(), file_type: FsFileType::RegularFile },
+                ]),
+                _ => Err(FsError::NotFound(format!("inode {ino}"))),
+            }
+        }
+
+        fn lookup(&mut self, parent_ino: u64, name: &[u8]) -> FsResult<Option<u64>> {
+            let entries = self.read_dir(parent_ino)?;
+            Ok(entries.iter().find(|e| e.name == name).map(|e| e.inode))
+        }
+
+        fn metadata(&mut self, ino: u64) -> FsResult<FsMetadata> {
+            let (file_type, size) = match ino {
+                2 => (FsFileType::Directory, 4096),
+                10 => (FsFileType::RegularFile, 12),
+                11 => (FsFileType::Directory, 4096),
+                12 => (FsFileType::RegularFile, 11),
+                _ => return Err(FsError::NotFound(format!("inode {ino}"))),
+            };
+            Ok(FsMetadata {
+                ino,
+                file_type,
+                mode: if file_type == FsFileType::Directory { 0o40755 } else { 0o100644 },
+                uid: 1000,
+                gid: 1000,
+                size: size as u64,
+                links_count: if file_type == FsFileType::Directory { 2 } else { 1 },
+                atime: FsTimestamp { seconds: 1700000000, nanoseconds: 0 },
+                mtime: FsTimestamp { seconds: 1700000000, nanoseconds: 0 },
+                ctime: FsTimestamp { seconds: 1700000000, nanoseconds: 0 },
+                crtime: FsTimestamp { seconds: 1699000000, nanoseconds: 0 },
+                allocated: true,
+            })
+        }
+
+        fn read_file(&mut self, ino: u64) -> FsResult<Vec<u8>> {
+            match ino {
+                10 => Ok(b"Hello, mock!".to_vec()),
+                12 => Ok(b"Nested file".to_vec()),
+                _ => Err(FsError::NotFound(format!("inode {ino}"))),
+            }
+        }
+
+        fn read_file_range(&mut self, ino: u64, offset: u64, len: u64) -> FsResult<Vec<u8>> {
+            let data = self.read_file(ino)?;
+            let start = (offset as usize).min(data.len());
+            let end = (start + len as usize).min(data.len());
+            Ok(data[start..end].to_vec())
+        }
+
+        fn read_link(&mut self, _ino: u64) -> FsResult<Vec<u8>> {
+            Err(FsError::NotFound("no symlinks in mock".to_string()))
+        }
+
+        fn deleted_inodes(&mut self) -> FsResult<Vec<FsDeletedInode>> {
+            Ok(vec![FsDeletedInode {
+                ino: 99,
+                file_type: FsFileType::RegularFile,
+                size: 100,
+                dtime: 1700001000,
+                recoverability: 0.75,
+            }])
+        }
+
+        fn recover_file(&mut self, ino: u64) -> FsResult<FsRecoveryResult> {
+            match ino {
+                99 => Ok(FsRecoveryResult {
+                    ino: 99,
+                    data: vec![0xDE; 100],
+                    expected_size: 100,
+                    recovered_bytes: 100,
+                    recovery_percentage: 1.0,
+                }),
+                _ => Err(FsError::NotFound(format!("inode {ino}"))),
+            }
+        }
+
+        fn timeline(&mut self) -> FsResult<Vec<FsTimelineEvent>> {
+            Ok(vec![FsTimelineEvent {
+                timestamp: FsTimestamp { seconds: 1700000000, nanoseconds: 0 },
+                event_type: FsEventType::Created,
+                inode: 10,
+                size: 12,
+                uid: 1000,
+                gid: 1000,
+            }])
+        }
+
+        fn fs_info(&self) -> FsResult<serde_json::Value> {
+            Ok(serde_json::json!({ "filesystem": "mock", "block_size": 4096 }))
+        }
+
+        fn block_size(&self) -> u64 {
+            4096
+        }
+    }
+
+    fn make_mock_fuse() -> ForensicFuseFs {
+        ForensicFuseFs::new(Box::new(MockForensicFs), None)
+    }
+
+    #[test]
+    fn mock_ensure_deleted_cache() {
+        let fuse = make_mock_fuse();
+        assert!(fuse.deleted_cache.borrow().is_none());
+        fuse.ensure_deleted_cache();
+        let cache = fuse.deleted_cache.borrow();
+        let entries = cache.as_ref().expect("cache should be populated");
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].fs_ino, 99);
+        assert_eq!(entries[0].name, "99_unknown");
+        assert_eq!(entries[0].data.len(), 100);
+    }
+
+    #[test]
+    fn mock_ensure_metadata_cache() {
+        let fuse = make_mock_fuse();
+        assert!(fuse.metadata_cache.borrow().is_none());
+        fuse.ensure_metadata_cache();
+        let cache = fuse.metadata_cache.borrow();
+        let mc = cache.as_ref().expect("cache should be populated");
+        let sb_str = String::from_utf8_lossy(&mc.superblock_json);
+        assert!(sb_str.contains("mock"), "superblock_json should contain 'mock': {sb_str}");
+        assert!(!mc.timeline_jsonl.is_empty(), "timeline_jsonl should not be empty");
+    }
+
+    #[test]
+    fn mock_root_ino_stored() {
+        let fuse = make_mock_fuse();
+        assert_eq!(fuse.root_ino, 2);
+    }
+
+    #[test]
+    fn mock_has_session_false() {
+        let fuse = make_mock_fuse();
+        assert!(!fuse.has_session());
+    }
+
+    #[test]
+    fn mock_read_file_through_fs() {
+        let fuse = make_mock_fuse();
+        let mut fs = fuse.fs.borrow_mut();
+        let data = fs.read_file(10).expect("read_file(10) should succeed");
+        assert_eq!(data, b"Hello, mock!");
+    }
+
+    #[test]
+    fn mock_read_file_range_through_fs() {
+        let fuse = make_mock_fuse();
+        let mut fs = fuse.fs.borrow_mut();
+        let data = fs.read_file_range(10, 0, 5).expect("read_file_range should succeed");
+        assert_eq!(data, b"Hello");
+    }
+
+    #[test]
+    fn mock_lookup_through_fs() {
+        let fuse = make_mock_fuse();
+        let mut fs = fuse.fs.borrow_mut();
+        let result = fs.lookup(2, b"hello.txt").expect("lookup should succeed");
+        assert_eq!(result, Some(10));
+    }
+
+    #[test]
+    fn mock_metadata_through_fs() {
+        let fuse = make_mock_fuse();
+        let mut fs = fuse.fs.borrow_mut();
+        let meta = fs.metadata(10).expect("metadata(10) should succeed");
+        assert_eq!(meta.file_type, FsFileType::RegularFile);
+        assert_eq!(meta.size, 12);
+        assert_eq!(meta.ino, 10);
+    }
+
+    #[test]
+    fn mock_fs_to_attr() {
+        let fuse = make_mock_fuse();
+        let meta = {
+            let mut fs = fuse.fs.borrow_mut();
+            fs.metadata(10).expect("metadata(10) should succeed")
+        };
+        let attr = fs_to_attr(ro_ino(10), &meta);
+        assert_eq!(attr.ino, ro_ino(10));
+        assert_eq!(attr.kind, FileType::RegularFile);
+        assert_eq!(attr.size, 12);
+        assert_eq!(attr.perm, 0o644);
+        assert_eq!(attr.uid, 1000);
+        assert_eq!(attr.gid, 1000);
+        assert_eq!(attr.nlink, 1);
+        assert_eq!(attr.blksize, 4096);
+        let expected_atime = UNIX_EPOCH + Duration::from_secs(1700000000);
+        assert_eq!(attr.atime, expected_atime);
+        let expected_crtime = UNIX_EPOCH + Duration::from_secs(1699000000);
+        assert_eq!(attr.crtime, expected_crtime);
+    }
+
+    #[test]
+    fn mock_timeline_through_fs() {
+        let fuse = make_mock_fuse();
+        let mut fs = fuse.fs.borrow_mut();
+        let events = fs.timeline().expect("timeline should succeed");
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].event_type, FsEventType::Created);
+        assert_eq!(events[0].inode, 10);
+        assert_eq!(events[0].size, 12);
+    }
+
+    #[test]
+    fn mock_ensure_journal_cache_empty() {
+        let fuse = make_mock_fuse();
+        assert!(fuse.journal_cache.borrow().is_none());
+        fuse.ensure_journal_cache();
+        let cache = fuse.journal_cache.borrow();
+        let entries = cache.as_ref().expect("cache should be populated");
+        assert!(entries.is_empty(), "mock has no journal_transactions override, should be empty");
+    }
 }
