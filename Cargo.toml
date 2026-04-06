@@ -5,11 +5,16 @@ edition = "2021"
 description = "Universal forensic FUSE mount framework with ForensicFs trait"
 license = "MIT"
 
+[[bin]]
+name = "4n6mount"
+path = "src/main.rs"
+
 [features]
 default = ["ext4"]
 ext4 = ["dep:ext4fs"]
 
 [dependencies]
+clap = { version = "4", features = ["derive"] }
 ext4fs = { path = "../ext4fs-forensic/ext4fs", optional = true }
 fuser = "0.15"
 serde = { version = "1", features = ["derive"] }
