@@ -187,10 +187,8 @@ All pure Rust. All MIT licensed. All designed to work together.
 This project builds on decades of work by the digital forensics community:
 
 - **Brian Carrier** — for [The Sleuth Kit](https://www.sleuthkit.org/) and [Autopsy](https://www.autopsy.com/), which defined how forensic tools interact with filesystems and set the standard every tool since has followed
-- **Rob T. Lee** — for [SANS FOR508](https://www.sans.org/cyber-security-courses/advanced-incident-response-threat-hunting-training/), which taught us that forensic analysis is about timelines, evidence integrity, and telling the story of what happened
+- **Rob T. Lee** — for [SANS FOR508](https://www.sans.org/cyber-security-courses/advanced-incident-response-threat-hunting-training/), which taught me that forensic analysis is about timelines, evidence integrity, and telling the story of what happened (GCFA #285)
 - **Jesse Kornblum** — for [hashdeep](https://github.com/jessek/hashdeep) and md5deep, the original forensic hashing tools that [blazehash](https://github.com/SecurityRonin/blazehash) carries forward
-
-We are GCFA #285. We stand on your shoulders.
 
 ## License
 
