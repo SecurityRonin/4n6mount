@@ -14,6 +14,8 @@ pub mod fuse_windows;
 #[cfg(feature = "ext4")]
 pub mod fs_ext4;
 
+pub mod fs_raw;
+
 pub use types::*;
 
 use std::io;
