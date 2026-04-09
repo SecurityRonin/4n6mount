@@ -8,6 +8,7 @@ pub enum FsType {
     Ext4,
     Ntfs,
     ExFat,
+    Ewf,
     Unknown,
 }
 
@@ -17,6 +18,7 @@ impl std::fmt::Display for FsType {
             FsType::Ext4 => write!(f, "ext4"),
             FsType::Ntfs => write!(f, "ntfs"),
             FsType::ExFat => write!(f, "exfat"),
+            FsType::Ewf => write!(f, "ewf"),
             FsType::Unknown => write!(f, "unknown"),
         }
     }
@@ -29,6 +31,7 @@ impl std::str::FromStr for FsType {
             "ext4" => Ok(FsType::Ext4),
             "ntfs" => Ok(FsType::Ntfs),
             "exfat" => Ok(FsType::ExFat),
+            "ewf" | "e01" => Ok(FsType::Ewf),
             _ => Err(format!("unknown filesystem type: {s}")),
         }
     }
@@ -174,6 +177,26 @@ mod tests {
         assert_eq!(FsType::Ntfs.to_string(), "ntfs");
         assert_eq!(FsType::ExFat.to_string(), "exfat");
         assert_eq!(FsType::Unknown.to_string(), "unknown");
+    }
+
+    #[test]
+    fn detect_ewf_image() {
+        // EWF signature: EVF\x09\x0d\x0a\xff\x00
+        let mut data = vec![0u8; 2048];
+        data[0..8].copy_from_slice(&[0x45, 0x56, 0x46, 0x09, 0x0D, 0x0A, 0xFF, 0x00]);
+        let mut cursor = Cursor::new(data);
+        assert_eq!(detect_filesystem(&mut cursor).unwrap(), FsType::Ewf);
+    }
+
+    #[test]
+    fn fstype_ewf_display() {
+        assert_eq!(FsType::Ewf.to_string(), "ewf");
+    }
+
+    #[test]
+    fn fstype_ewf_from_str() {
+        assert_eq!("ewf".parse::<FsType>().unwrap(), FsType::Ewf);
+        assert_eq!("e01".parse::<FsType>().unwrap(), FsType::Ewf);
     }
 
     #[test]

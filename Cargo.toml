@@ -10,12 +10,14 @@ name = "4n6mount"
 path = "src/main.rs"
 
 [features]
-default = ["ext4"]
+default = ["ext4", "ewf"]
 ext4 = ["dep:ext4fs"]
+ewf = ["dep:ewf"]
 
 [dependencies]
 clap = { version = "4", features = ["derive"] }
 ext4fs = { path = "../ext4fs-forensic/ext4fs", optional = true }
+ewf = { path = "../ewf/ewf", optional = true }
 fuser = "0.15"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

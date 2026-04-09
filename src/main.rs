@@ -128,6 +128,10 @@ fn main() {
                 std::process::exit(1);
             }))
         }
+        #[cfg(feature = "ewf")]
+        forensic_mount::detect::FsType::Ewf => {
+            todo!("open EWF image, detect filesystem inside, create ForensicFs")
+        }
         _ => {
             eprintln!(
                 "Filesystem type '{fs_type}' is not supported (compiled features may be missing)"
