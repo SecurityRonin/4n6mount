@@ -52,6 +52,11 @@ pub fn detect_filesystem<R: Read + Seek>(source: &mut R) -> io::Result<FsType> {
     // Reset seek position to start
     source.seek(SeekFrom::Start(0))?;
 
+    // Check EWF: signature "EVF\x09\x0d\x0a\xff\x00" at byte 0
+    if bytes_read >= 8 && buf[0..3] == [0x45, 0x56, 0x46] && buf[3] == 0x09 {
+        return Ok(FsType::Ewf);
+    }
+
     // Check NTFS: "NTFS" at byte 3
     if bytes_read >= 7 && &buf[3..7] == b"NTFS" {
         return Ok(FsType::Ntfs);

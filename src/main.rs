@@ -130,7 +130,26 @@ fn main() {
         }
         #[cfg(feature = "ewf")]
         forensic_mount::detect::FsType::Ewf => {
-            todo!("open EWF image, detect filesystem inside, create ForensicFs")
+            let mut ewf_reader = ewf::EwfReader::open(&image)
+                .unwrap_or_else(|e| { eprintln!("Cannot open EWF image: {e}"); std::process::exit(1); });
+
+            // Detect filesystem inside the EWF container
+            let inner_fs_type = forensic_mount::detect::detect_filesystem(&mut ewf_reader)
+                .unwrap_or_else(|e| { eprintln!("Cannot detect filesystem in EWF: {e}"); std::process::exit(1); });
+
+            eprintln!("EWF container detected, inner filesystem: {inner_fs_type}");
+
+            match inner_fs_type {
+                #[cfg(feature = "ext4")]
+                forensic_mount::detect::FsType::Ext4 => {
+                    Box::new(forensic_mount::fs_ext4::Ext4ForensicFs::new(ewf_reader)
+                        .unwrap_or_else(|e| { eprintln!("Cannot parse ext4 in EWF: {e}"); std::process::exit(1); }))
+                }
+                other => {
+                    eprintln!("Filesystem '{other}' inside EWF is not supported");
+                    std::process::exit(1);
+                }
+            }
         }
         _ => {
             eprintln!(
