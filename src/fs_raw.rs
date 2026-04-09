@@ -22,21 +22,94 @@ impl<R: Read + Seek> RawForensicFs<R> {
 }
 
 impl<R: Read + Seek> ForensicFs for RawForensicFs<R> {
-    fn root_ino(&self) -> u64 { todo!() }
+    fn root_ino(&self) -> u64 { 1 }
 
-    fn read_dir(&mut self, _ino: u64) -> FsResult<Vec<FsDirEntry>> { todo!() }
+    fn read_dir(&mut self, ino: u64) -> FsResult<Vec<FsDirEntry>> {
+        if ino == 1 {
+            Ok(vec![
+                FsDirEntry { inode: 1, name: b".".to_vec(), file_type: FsFileType::Directory },
+                FsDirEntry { inode: 1, name: b"..".to_vec(), file_type: FsFileType::Directory },
+                FsDirEntry { inode: 2, name: self.filename.as_bytes().to_vec(), file_type: FsFileType::RegularFile },
+            ])
+        } else {
+            Err(FsError::NotFound(format!("inode {ino}")))
+        }
+    }
 
-    fn lookup(&mut self, _parent_ino: u64, _name: &[u8]) -> FsResult<Option<u64>> { todo!() }
+    fn lookup(&mut self, _parent_ino: u64, name: &[u8]) -> FsResult<Option<u64>> {
+        if name == self.filename.as_bytes() {
+            Ok(Some(2))
+        } else if name == b"." || name == b".." {
+            Ok(Some(1))
+        } else {
+            Ok(None)
+        }
+    }
 
-    fn metadata(&mut self, _ino: u64) -> FsResult<FsMetadata> { todo!() }
+    fn metadata(&mut self, ino: u64) -> FsResult<FsMetadata> {
+        match ino {
+            1 => Ok(FsMetadata {
+                ino: 1,
+                file_type: FsFileType::Directory,
+                mode: 0o40555,
+                uid: 0, gid: 0,
+                size: 0,
+                links_count: 2,
+                atime: FsTimestamp::default(),
+                mtime: FsTimestamp::default(),
+                ctime: FsTimestamp::default(),
+                crtime: FsTimestamp::default(),
+                allocated: true,
+            }),
+            2 => Ok(FsMetadata {
+                ino: 2,
+                file_type: FsFileType::RegularFile,
+                mode: 0o100444,
+                uid: 0, gid: 0,
+                size: self.size,
+                links_count: 1,
+                atime: FsTimestamp::default(),
+                mtime: FsTimestamp::default(),
+                ctime: FsTimestamp::default(),
+                crtime: FsTimestamp::default(),
+                allocated: true,
+            }),
+            _ => Err(FsError::NotFound(format!("inode {ino}"))),
+        }
+    }
 
-    fn read_file(&mut self, _ino: u64) -> FsResult<Vec<u8>> { todo!() }
+    fn read_file(&mut self, ino: u64) -> FsResult<Vec<u8>> {
+        if ino != 2 {
+            return Err(FsError::NotFound(format!("inode {ino}")));
+        }
+        self.source.seek(SeekFrom::Start(0)).map_err(FsError::Io)?;
+        let mut data = Vec::with_capacity(self.size as usize);
+        self.source.read_to_end(&mut data).map_err(FsError::Io)?;
+        Ok(data)
+    }
 
-    fn read_file_range(&mut self, _ino: u64, _offset: u64, _len: u64) -> FsResult<Vec<u8>> { todo!() }
+    fn read_file_range(&mut self, ino: u64, offset: u64, len: u64) -> FsResult<Vec<u8>> {
+        if ino != 2 {
+            return Err(FsError::NotFound(format!("inode {ino}")));
+        }
+        self.source.seek(SeekFrom::Start(offset)).map_err(FsError::Io)?;
+        let actual_len = len.min(self.size.saturating_sub(offset)) as usize;
+        let mut buf = vec![0u8; actual_len];
+        self.source.read_exact(&mut buf).map_err(FsError::Io)?;
+        Ok(buf)
+    }
 
-    fn read_link(&mut self, _ino: u64) -> FsResult<Vec<u8>> { todo!() }
+    fn read_link(&mut self, _ino: u64) -> FsResult<Vec<u8>> {
+        Err(FsError::NotFound("no symlinks in raw data".to_string()))
+    }
 
-    fn fs_info(&self) -> FsResult<serde_json::Value> { todo!() }
+    fn fs_info(&self) -> FsResult<serde_json::Value> {
+        Ok(serde_json::json!({
+            "filesystem": "raw",
+            "size": self.size,
+            "filename": self.filename,
+        }))
+    }
 }
 
 #[cfg(test)]

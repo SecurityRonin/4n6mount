@@ -145,6 +145,15 @@ fn main() {
                     Box::new(forensic_mount::fs_ext4::Ext4ForensicFs::new(ewf_reader)
                         .unwrap_or_else(|e| { eprintln!("Cannot parse ext4 in EWF: {e}"); std::process::exit(1); }))
                 }
+                forensic_mount::detect::FsType::Unknown => {
+                    eprintln!("No filesystem detected inside EWF — mounting as raw data");
+                    let filename = std::path::Path::new(&image)
+                        .file_name()
+                        .map(|n| n.to_string_lossy().to_string())
+                        .unwrap_or_else(|| "evidence.bin".to_string());
+                    Box::new(forensic_mount::fs_raw::RawForensicFs::new(ewf_reader, filename)
+                        .unwrap_or_else(|e| { eprintln!("Cannot create raw FS: {e}"); std::process::exit(1); }))
+                }
                 other => {
                     eprintln!("Filesystem '{other}' inside EWF is not supported");
                     std::process::exit(1);
