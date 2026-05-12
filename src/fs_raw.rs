@@ -1,9 +1,9 @@
 #![forbid(unsafe_code)]
 
-use crate::{ForensicFs, FsDirEntry, FsFileType, FsMetadata, FsTimestamp, FsError, FsResult};
+use crate::{ForensicFs, FsDirEntry, FsError, FsFileType, FsMetadata, FsResult, FsTimestamp};
 use std::io::{Read, Seek, SeekFrom};
 
-/// A ForensicFs that exposes a single raw data source as one file.
+/// A `ForensicFs` that exposes a single raw data source as one file.
 /// Used for L01 logical evidence or raw binary data.
 pub struct RawForensicFs<R: Read + Seek> {
     source: R,
@@ -13,23 +13,39 @@ pub struct RawForensicFs<R: Read + Seek> {
 
 impl<R: Read + Seek> RawForensicFs<R> {
     pub fn new(mut source: R, filename: String) -> Result<Self, FsError> {
-        let size = source.seek(SeekFrom::End(0))
-            .map_err(|e| FsError::Io(e))?;
-        source.seek(SeekFrom::Start(0))
-            .map_err(|e| FsError::Io(e))?;
-        Ok(Self { source, size, filename })
+        let size = source.seek(SeekFrom::End(0)).map_err(FsError::Io)?;
+        source.seek(SeekFrom::Start(0)).map_err(FsError::Io)?;
+        Ok(Self {
+            source,
+            size,
+            filename,
+        })
     }
 }
 
 impl<R: Read + Seek> ForensicFs for RawForensicFs<R> {
-    fn root_ino(&self) -> u64 { 1 }
+    fn root_ino(&self) -> u64 {
+        1
+    }
 
     fn read_dir(&mut self, ino: u64) -> FsResult<Vec<FsDirEntry>> {
         if ino == 1 {
             Ok(vec![
-                FsDirEntry { inode: 1, name: b".".to_vec(), file_type: FsFileType::Directory },
-                FsDirEntry { inode: 1, name: b"..".to_vec(), file_type: FsFileType::Directory },
-                FsDirEntry { inode: 2, name: self.filename.as_bytes().to_vec(), file_type: FsFileType::RegularFile },
+                FsDirEntry {
+                    inode: 1,
+                    name: b".".to_vec(),
+                    file_type: FsFileType::Directory,
+                },
+                FsDirEntry {
+                    inode: 1,
+                    name: b"..".to_vec(),
+                    file_type: FsFileType::Directory,
+                },
+                FsDirEntry {
+                    inode: 2,
+                    name: self.filename.as_bytes().to_vec(),
+                    file_type: FsFileType::RegularFile,
+                },
             ])
         } else {
             Err(FsError::NotFound(format!("inode {ino}")))
@@ -52,7 +68,8 @@ impl<R: Read + Seek> ForensicFs for RawForensicFs<R> {
                 ino: 1,
                 file_type: FsFileType::Directory,
                 mode: 0o40555,
-                uid: 0, gid: 0,
+                uid: 0,
+                gid: 0,
                 size: 0,
                 links_count: 2,
                 atime: FsTimestamp::default(),
@@ -64,8 +81,9 @@ impl<R: Read + Seek> ForensicFs for RawForensicFs<R> {
             2 => Ok(FsMetadata {
                 ino: 2,
                 file_type: FsFileType::RegularFile,
-                mode: 0o100444,
-                uid: 0, gid: 0,
+                mode: 0o100_444,
+                uid: 0,
+                gid: 0,
                 size: self.size,
                 links_count: 1,
                 atime: FsTimestamp::default(),
@@ -92,7 +110,9 @@ impl<R: Read + Seek> ForensicFs for RawForensicFs<R> {
         if ino != 2 {
             return Err(FsError::NotFound(format!("inode {ino}")));
         }
-        self.source.seek(SeekFrom::Start(offset)).map_err(FsError::Io)?;
+        self.source
+            .seek(SeekFrom::Start(offset))
+            .map_err(FsError::Io)?;
         let actual_len = len.min(self.size.saturating_sub(offset)) as usize;
         let mut buf = vec![0u8; actual_len];
         self.source.read_exact(&mut buf).map_err(FsError::Io)?;
@@ -132,7 +152,10 @@ mod tests {
         let mut fs = make_raw_fs(b"hello");
         let entries = fs.read_dir(1).unwrap();
         assert_eq!(entries.len(), 3); // ., .., evidence.bin
-        let names: Vec<String> = entries.iter().map(|e| e.name_str()).collect();
+        let names: Vec<String> = entries
+            .iter()
+            .map(super::super::types::FsDirEntry::name_str)
+            .collect();
         assert!(names.contains(&"evidence.bin".to_string()));
     }
 

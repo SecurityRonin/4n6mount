@@ -137,7 +137,10 @@ mod tests {
     fn virtual_dirs() {
         assert_eq!(decode_fuse_ino(FUSE_RO_INO), InodeNamespace::Virtual(2));
         assert_eq!(decode_fuse_ino(FUSE_RW_INO), InodeNamespace::Virtual(3));
-        assert_eq!(decode_fuse_ino(FUSE_DELETED_INO), InodeNamespace::Virtual(4));
+        assert_eq!(
+            decode_fuse_ino(FUSE_DELETED_INO),
+            InodeNamespace::Virtual(4)
+        );
     }
 
     #[test]

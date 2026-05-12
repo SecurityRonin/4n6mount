@@ -83,9 +83,8 @@ fn read_fill<R: Read>(source: &mut R, buf: &mut [u8]) -> usize {
     let mut total = 0;
     while total < buf.len() {
         match source.read(&mut buf[total..]) {
-            Ok(0) => break,
+            Ok(0) | Err(_) => break,
             Ok(n) => total += n,
-            Err(_) => break,
         }
     }
     total
@@ -160,9 +159,9 @@ mod tests {
     #[test]
     fn detect_real_ext4_image() {
         let path = "/Users/4n6h4x0r/src/ext4fs-forensic/tests/data/forensic.img";
-        let data = match std::fs::read(path) {
-            Ok(d) => d,
-            Err(_) => { eprintln!("skip: forensic.img not found"); return; }
+        let Ok(data) = std::fs::read(path) else {
+            eprintln!("skip: forensic.img not found");
+            return;
         };
         let mut cursor = Cursor::new(data);
         assert_eq!(detect_filesystem(&mut cursor).unwrap(), FsType::Ext4);

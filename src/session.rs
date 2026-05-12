@@ -107,14 +107,13 @@ impl Session {
 
     /// Persist session.json and overlay/metadata.json to disk.
     pub fn save(&self) -> io::Result<()> {
-        let session_json = serde_json::to_string_pretty(&self.metadata)
-            .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
+        let session_json =
+            serde_json::to_string_pretty(&self.metadata).map_err(io::Error::other)?;
         fs::write(self.dir.join("session.json"), session_json)?;
 
         let overlay_dir = self.dir.join("overlay");
         fs::create_dir_all(&overlay_dir)?;
-        let overlay_json = serde_json::to_string_pretty(&self.overlay)
-            .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
+        let overlay_json = serde_json::to_string_pretty(&self.overlay).map_err(io::Error::other)?;
         fs::write(overlay_dir.join("metadata.json"), overlay_json)?;
 
         Ok(())
@@ -149,11 +148,9 @@ pub fn export_session(session_dir: &Path, output: &Path) -> io::Result<()> {
     let parent = session_dir
         .parent()
         .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "session_dir has no parent"))?;
-    let dir_name = session_dir
-        .file_name()
-        .ok_or_else(|| {
-            io::Error::new(io::ErrorKind::InvalidInput, "session_dir has no file name")
-        })?;
+    let dir_name = session_dir.file_name().ok_or_else(|| {
+        io::Error::new(io::ErrorKind::InvalidInput, "session_dir has no file name")
+    })?;
 
     let status = Command::new("tar")
         .arg("-czf")
@@ -164,10 +161,7 @@ pub fn export_session(session_dir: &Path, output: &Path) -> io::Result<()> {
         .status()?;
 
     if !status.success() {
-        return Err(io::Error::new(
-            io::ErrorKind::Other,
-            format!("tar exited with {status}"),
-        ));
+        return Err(io::Error::other(format!("tar exited with {status}")));
     }
     Ok(())
 }
@@ -185,10 +179,7 @@ pub fn import_session(tarball: &Path, session_dir: &Path) -> io::Result<()> {
         .status()?;
 
     if !status.success() {
-        return Err(io::Error::new(
-            io::ErrorKind::Other,
-            format!("tar exited with {status}"),
-        ));
+        return Err(io::Error::other(format!("tar exited with {status}")));
     }
     Ok(())
 }
@@ -237,7 +228,11 @@ mod tests {
 
     /// Create a unique temp dir for a test.
     fn tmp_dir(name: &str) -> PathBuf {
-        let dir = std::env::temp_dir().join(format!("forensic_mount_test_{}_{}", name, std::process::id()));
+        let dir = std::env::temp_dir().join(format!(
+            "forensic_mount_test_{}_{}",
+            name,
+            std::process::id()
+        ));
         let _ = fs::remove_dir_all(&dir);
         fs::create_dir_all(&dir).unwrap();
         dir
@@ -329,7 +324,9 @@ mod tests {
         // Create session with overlay data
         let session_dir = base.join("session");
         let session = Session::create(&session_dir, &image).unwrap();
-        session.write_overlay_file("test_file", b"overlay data").unwrap();
+        session
+            .write_overlay_file("test_file", b"overlay data")
+            .unwrap();
 
         // Export
         let tarball = base.join("export.tar.gz");

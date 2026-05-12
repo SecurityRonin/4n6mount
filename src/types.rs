@@ -111,7 +111,7 @@ pub struct FsTransaction {
     pub commit_nanoseconds: u32,
 }
 
-/// Error type for ForensicFs operations.
+/// Error type for `ForensicFs` operations.
 #[derive(Debug)]
 pub enum FsError {
     Io(std::io::Error),

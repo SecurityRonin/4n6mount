@@ -1,14 +1,14 @@
 #![forbid(unsafe_code)]
 
-use crate::MountOptions;
 use crate::session::Session;
 use crate::ForensicFs;
+use crate::MountOptions;
 use std::io;
 use std::path::Path;
 
-/// Mount a `ForensicFs` via WinFSP on Windows.
+/// Mount a `ForensicFs` via `WinFSP` on Windows.
 ///
-/// This is a stub -- WinFSP support will be implemented when the
+/// This is a stub -- `WinFSP` support will be implemented when the
 /// `winfsp-wrs` crate is integrated.  Until then it unconditionally
 /// returns `io::ErrorKind::Unsupported`.
 pub fn mount_windows(

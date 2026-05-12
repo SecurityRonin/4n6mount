@@ -2,8 +2,8 @@
 
 use crate::fusefs::ForensicFuseFs;
 use crate::session::Session;
-use crate::MountOptions;
 use crate::ForensicFs;
+use crate::MountOptions;
 use std::io;
 use std::path::Path;
 
@@ -44,7 +44,7 @@ pub fn mount_unix(
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+
     use crate::MountOptions;
 
     // ----- MountOptions::default() -----

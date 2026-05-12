@@ -1,8 +1,12 @@
 #![forbid(unsafe_code)]
 
-use crate::inode_map::*;
+use crate::inode_map::{
+    decode_fuse_ino, deleted_ino, journal_ino, metadata_ino, ro_ino, rw_ino, unallocated_ino,
+    InodeNamespace, FUSE_DELETED_INO, FUSE_JOURNAL_INO, FUSE_METADATA_INO, FUSE_ROOT_INO,
+    FUSE_RO_INO, FUSE_RW_INO, FUSE_SESSION_INO, FUSE_UNALLOCATED_INO,
+};
 use crate::session::Session;
-use crate::types::*;
+use crate::types::{FsBlockRange, FsEventType, FsFileType, FsMetadata, FsTimestamp};
 use crate::ForensicFs;
 use fuser::{
     FileAttr, FileType, Filesystem, ReplyAttr, ReplyCreate, ReplyData, ReplyDirectory, ReplyEmpty,
@@ -109,7 +113,7 @@ impl ForensicFuseFs {
         format!("new_{counter}")
     }
 
-    /// Build a FileAttr for an overlay-created file.
+    /// Build a `FileAttr` for an overlay-created file.
     fn overlay_created_attr(fuse_ino: u64, size: u64, is_dir: bool) -> FileAttr {
         let kind = if is_dir {
             FileType::Directory
@@ -275,7 +279,7 @@ impl ForensicFuseFs {
         *self.unallocated_cache.borrow_mut() = Some(entries);
     }
 
-    /// Find a created overlay entry by parent_ino and name.
+    /// Find a created overlay entry by `parent_ino` and name.
     fn find_created_by_name(&self, parent_ino: u64, name: &[u8]) -> Option<(String, u64, bool)> {
         let session = self.session.borrow();
         let session = session.as_ref()?;
@@ -308,14 +312,13 @@ fn ts_to_systime(t: &FsTimestamp) -> SystemTime {
 /// Build a `FileAttr` from an `FsMetadata`.
 fn fs_to_attr(fuse_ino: u64, meta: &FsMetadata) -> FileAttr {
     let kind = match meta.file_type {
-        FsFileType::RegularFile => FileType::RegularFile,
+        FsFileType::RegularFile | FsFileType::Unknown => FileType::RegularFile,
         FsFileType::Directory => FileType::Directory,
         FsFileType::Symlink => FileType::Symlink,
         FsFileType::CharDevice => FileType::CharDevice,
         FsFileType::BlockDevice => FileType::BlockDevice,
         FsFileType::Fifo => FileType::NamedPipe,
         FsFileType::Socket => FileType::Socket,
-        FsFileType::Unknown => FileType::RegularFile,
     };
 
     FileAttr {
@@ -328,7 +331,7 @@ fn fs_to_attr(fuse_ino: u64, meta: &FsMetadata) -> FileAttr {
         crtime: ts_to_systime(&meta.crtime),
         kind,
         perm: meta.mode & 0o7777,
-        nlink: meta.links_count as u32,
+        nlink: u32::from(meta.links_count),
         uid: meta.uid,
         gid: meta.gid,
         rdev: 0,
@@ -382,14 +385,13 @@ fn virtual_file_attr(ino: u64, size: u64) -> FileAttr {
 /// Convert an `FsFileType` to a fuser `FileType`.
 fn fs_file_type_to_fuse(t: FsFileType) -> FileType {
     match t {
-        FsFileType::RegularFile => FileType::RegularFile,
+        FsFileType::RegularFile | FsFileType::Unknown => FileType::RegularFile,
         FsFileType::Directory => FileType::Directory,
         FsFileType::Symlink => FileType::Symlink,
         FsFileType::CharDevice => FileType::CharDevice,
         FsFileType::BlockDevice => FileType::BlockDevice,
         FsFileType::Fifo => FileType::NamedPipe,
         FsFileType::Socket => FileType::Socket,
-        FsFileType::Unknown => FileType::RegularFile,
     }
 }
 
@@ -519,8 +521,7 @@ impl Filesystem for ForensicFuseFs {
         // rw/ namespace lookup.
         if let Some(fs_parent) = self.rw_parent_to_fs(parent) {
             // Check overlay created files first.
-            if let Some((id, counter, is_dir)) = self.find_created_by_name(fs_parent, name_bytes)
-            {
+            if let Some((id, counter, is_dir)) = self.find_created_by_name(fs_parent, name_bytes) {
                 let session = self.session.borrow();
                 let session = session.as_ref().unwrap();
                 let entry = if is_dir {
@@ -552,22 +553,18 @@ impl Filesystem for ForensicFuseFs {
                         let overlay_id = Self::modified_overlay_id(child_ino);
                         if let Some(s) = session.as_ref() {
                             if s.overlay.modified.contains_key(&child_ino) {
-                                match fs.metadata(child_ino) {
-                                    Ok(meta) => {
-                                        let fuse_ino = rw_ino(child_ino);
-                                        let mut attr = fs_to_attr(fuse_ino, &meta);
-                                        if let Ok(data) = s.read_overlay_file(&overlay_id) {
-                                            attr.size = data.len() as u64;
-                                            attr.blocks = attr.size.div_ceil(512);
-                                        }
-                                        reply.entry(&TTL, &attr, 0);
-                                        return;
+                                if let Ok(meta) = fs.metadata(child_ino) {
+                                    let fuse_ino = rw_ino(child_ino);
+                                    let mut attr = fs_to_attr(fuse_ino, &meta);
+                                    if let Ok(data) = s.read_overlay_file(&overlay_id) {
+                                        attr.size = data.len() as u64;
+                                        attr.blocks = attr.size.div_ceil(512);
                                     }
-                                    Err(_) => {
-                                        reply.error(libc::EIO);
-                                        return;
-                                    }
+                                    reply.entry(&TTL, &attr, 0);
+                                    return;
                                 }
+                                reply.error(libc::EIO);
+                                return;
                             }
                         }
 
@@ -596,13 +593,14 @@ impl Filesystem for ForensicFuseFs {
         // ro/ namespace: the ro/ virtual dir itself maps to the fs root inode.
         let fs_parent = match parent {
             FUSE_RO_INO => self.root_ino,
-            _ => match decode_fuse_ino(parent) {
-                InodeNamespace::Ro(ino) => ino,
-                _ => {
+            _ => {
+                if let InodeNamespace::Ro(ino) = decode_fuse_ino(parent) {
+                    ino
+                } else {
                     reply.error(libc::ENOENT);
                     return;
                 }
-            },
+            }
         };
 
         let mut fs = self.fs.borrow_mut();
@@ -654,10 +652,16 @@ impl Filesystem for ForensicFuseFs {
                 if let Some(mc) = cache.as_ref() {
                     match id {
                         1 => {
-                            reply.attr(&TTL, &virtual_file_attr(ino, mc.superblock_json.len() as u64));
+                            reply.attr(
+                                &TTL,
+                                &virtual_file_attr(ino, mc.superblock_json.len() as u64),
+                            );
                         }
                         2 => {
-                            reply.attr(&TTL, &virtual_file_attr(ino, mc.timeline_jsonl.len() as u64));
+                            reply.attr(
+                                &TTL,
+                                &virtual_file_attr(ino, mc.timeline_jsonl.len() as u64),
+                            );
                         }
                         100 => {
                             // session/status.json
@@ -669,8 +673,8 @@ impl Filesystem for ForensicFuseFs {
                                     "image_sha256": s.metadata.image_sha256,
                                     "created": s.metadata.created,
                                 });
-                                let data = serde_json::to_string_pretty(&status)
-                                    .unwrap_or_default();
+                                let data =
+                                    serde_json::to_string_pretty(&status).unwrap_or_default();
                                 reply.attr(&TTL, &virtual_file_attr(ino, data.len() as u64));
                             } else {
                                 reply.error(libc::ENOENT);
@@ -725,14 +729,12 @@ impl Filesystem for ForensicFuseFs {
                     let session = self.session.borrow();
                     if let Some(s) = session.as_ref() {
                         if let Some(entry) = s.overlay.created.get(&created_id) {
-                            let attr =
-                                Self::overlay_created_attr(ino, entry.size, false);
+                            let attr = Self::overlay_created_attr(ino, entry.size, false);
                             reply.attr(&TTL, &attr);
                             return;
                         }
                         if let Some(entry) = s.overlay.dirs.get(&created_id) {
-                            let attr =
-                                Self::overlay_created_attr(ino, entry.size, true);
+                            let attr = Self::overlay_created_attr(ino, entry.size, true);
                             reply.attr(&TTL, &attr);
                             return;
                         }
@@ -872,8 +874,7 @@ impl Filesystem for ForensicFuseFs {
                         }
                     }
 
-                    for (i, (entry_ino, kind, name)) in
-                        fuse_entries.iter().enumerate().skip(offset)
+                    for (i, (entry_ino, kind, name)) in fuse_entries.iter().enumerate().skip(offset)
                     {
                         if reply.add(*entry_ino, (i + 1) as i64, *kind, name) {
                             break;
@@ -1028,13 +1029,14 @@ impl Filesystem for ForensicFuseFs {
         // Determine the fs inode for this directory.
         let fs_dir_ino = match ino {
             FUSE_RO_INO => self.root_ino,
-            _ => match decode_fuse_ino(ino) {
-                InodeNamespace::Ro(fs_ino) => fs_ino,
-                _ => {
+            _ => {
+                if let InodeNamespace::Ro(fs_ino) = decode_fuse_ino(ino) {
+                    fs_ino
+                } else {
                     reply.error(libc::ENOENT);
                     return;
                 }
-            },
+            }
         };
 
         let mut fs = self.fs.borrow_mut();
@@ -1173,7 +1175,7 @@ impl Filesystem for ForensicFuseFs {
             }
             InodeNamespace::Ro(fs_ino) => {
                 let mut fs = self.fs.borrow_mut();
-                match fs.read_file_range(fs_ino, offset as u64, size as u64) {
+                match fs.read_file_range(fs_ino, offset as u64, u64::from(size)) {
                     Ok(data) => reply.data(&data),
                     Err(_) => reply.error(libc::EIO),
                 }
@@ -1188,22 +1190,18 @@ impl Filesystem for ForensicFuseFs {
                         if s.overlay.created.contains_key(&created_id)
                             || s.overlay.dirs.contains_key(&created_id)
                         {
-                            match s.read_overlay_file(&created_id) {
-                                Ok(data) => {
-                                    let off = offset as usize;
-                                    let end = (off + size as usize).min(data.len());
-                                    if off >= data.len() {
-                                        reply.data(&[]);
-                                    } else {
-                                        reply.data(&data[off..end]);
-                                    }
-                                    return;
+                            if let Ok(data) = s.read_overlay_file(&created_id) {
+                                let off = offset as usize;
+                                let end = (off + size as usize).min(data.len());
+                                if off >= data.len() {
+                                    reply.data(&[]);
+                                } else {
+                                    reply.data(&data[off..end]);
                                 }
-                                Err(_) => {
-                                    reply.error(libc::EIO);
-                                    return;
-                                }
+                                return;
                             }
+                            reply.error(libc::EIO);
+                            return;
                         }
                     }
                     reply.error(libc::ENOENT);
@@ -1217,29 +1215,25 @@ impl Filesystem for ForensicFuseFs {
                 if let Some(s) = session.as_ref() {
                     let overlay_id = Self::modified_overlay_id(fs_ino);
                     if s.overlay.modified.contains_key(&fs_ino) {
-                        match s.read_overlay_file(&overlay_id) {
-                            Ok(data) => {
-                                let off = offset as usize;
-                                let end = (off + size as usize).min(data.len());
-                                if off >= data.len() {
-                                    reply.data(&[]);
-                                } else {
-                                    reply.data(&data[off..end]);
-                                }
-                                return;
+                        if let Ok(data) = s.read_overlay_file(&overlay_id) {
+                            let off = offset as usize;
+                            let end = (off + size as usize).min(data.len());
+                            if off >= data.len() {
+                                reply.data(&[]);
+                            } else {
+                                reply.data(&data[off..end]);
                             }
-                            Err(_) => {
-                                reply.error(libc::EIO);
-                                return;
-                            }
+                            return;
                         }
+                        reply.error(libc::EIO);
+                        return;
                     }
                 }
                 drop(session);
 
                 // Fall back to underlying fs.
                 let mut fs = self.fs.borrow_mut();
-                match fs.read_file_range(fs_ino, offset as u64, size as u64) {
+                match fs.read_file_range(fs_ino, offset as u64, u64::from(size)) {
                     Ok(data) => reply.data(&data),
                     Err(_) => reply.error(libc::EIO),
                 }
@@ -1338,20 +1332,15 @@ impl Filesystem for ForensicFuseFs {
 
                 if !s.overlay.modified.contains_key(&fs_ino) {
                     let mut fs = self.fs.borrow_mut();
-                    let original = match fs.read_file(fs_ino) {
-                        Ok(d) => d,
-                        Err(_) => {
-                            reply.error(libc::EIO);
-                            return;
-                        }
+                    let Ok(original) = fs.read_file(fs_ino) else {
+                        reply.error(libc::EIO);
+                        return;
                     };
                     if s.write_overlay_file(&overlay_id, &original).is_err() {
                         reply.error(libc::EIO);
                         return;
                     }
-                    s.overlay
-                        .modified
-                        .insert(fs_ino, overlay_id.clone());
+                    s.overlay.modified.insert(fs_ino, overlay_id.clone());
                 }
 
                 let mut buf = s.read_overlay_file(&overlay_id).unwrap_or_default();
@@ -1393,21 +1382,16 @@ impl Filesystem for ForensicFuseFs {
             return;
         }
 
-        let fs_parent = match self.rw_parent_to_fs(parent) {
-            Some(ino) => ino,
-            None => {
-                reply.error(libc::EROFS);
-                return;
-            }
+        let Some(fs_parent) = self.rw_parent_to_fs(parent) else {
+            reply.error(libc::EROFS);
+            return;
         };
 
-        let name_str = match name.to_str() {
-            Some(s) => s.to_string(),
-            None => {
-                reply.error(libc::EINVAL);
-                return;
-            }
+        let Some(name_s) = name.to_str() else {
+            reply.error(libc::EINVAL);
+            return;
         };
+        let name_str = name_s.to_string();
 
         let counter = self.alloc_overlay_ino();
         let created_id = Self::created_overlay_id(counter);
@@ -1453,21 +1437,16 @@ impl Filesystem for ForensicFuseFs {
             return;
         }
 
-        let fs_parent = match self.rw_parent_to_fs(parent) {
-            Some(ino) => ino,
-            None => {
-                reply.error(libc::EROFS);
-                return;
-            }
+        let Some(fs_parent) = self.rw_parent_to_fs(parent) else {
+            reply.error(libc::EROFS);
+            return;
         };
 
-        let name_str = match name.to_str() {
-            Some(s) => s.to_string(),
-            None => {
-                reply.error(libc::EINVAL);
-                return;
-            }
+        let Some(name_s) = name.to_str() else {
+            reply.error(libc::EINVAL);
+            return;
         };
+        let name_str = name_s.to_string();
 
         let counter = self.alloc_overlay_ino();
         let created_id = Self::created_overlay_id(counter);
@@ -1500,12 +1479,9 @@ impl Filesystem for ForensicFuseFs {
             return;
         }
 
-        let fs_parent = match self.rw_parent_to_fs(parent) {
-            Some(ino) => ino,
-            None => {
-                reply.error(libc::EROFS);
-                return;
-            }
+        let Some(fs_parent) = self.rw_parent_to_fs(parent) else {
+            reply.error(libc::EROFS);
+            return;
         };
 
         let name_bytes = name.as_encoded_bytes();
@@ -1545,8 +1521,8 @@ impl Filesystem for ForensicFuseFs {
         }
     }
 
-    fn rmdir(&mut self, _req: &Request, parent: u64, name: &OsStr, reply: ReplyEmpty) {
-        self.unlink(_req, parent, name, reply);
+    fn rmdir(&mut self, req: &Request, parent: u64, name: &OsStr, reply: ReplyEmpty) {
+        self.unlink(req, parent, name, reply);
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -1616,12 +1592,9 @@ impl Filesystem for ForensicFuseFs {
 
                     if !s.overlay.modified.contains_key(&fs_ino) {
                         let mut fs = self.fs.borrow_mut();
-                        let original = match fs.read_file(fs_ino) {
-                            Ok(d) => d,
-                            Err(_) => {
-                                reply.error(libc::EIO);
-                                return;
-                            }
+                        let Ok(original) = fs.read_file(fs_ino) else {
+                            reply.error(libc::EIO);
+                            return;
                         };
                         if s.write_overlay_file(&overlay_id, &original).is_err() {
                             reply.error(libc::EIO);
@@ -1704,6 +1677,7 @@ impl Filesystem for ForensicFuseFs {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::{FsDeletedInode, FsDirEntry, FsError, FsRecoveryResult, FsResult, FsTimelineEvent};
     use fuser::FileType;
     use std::time::{Duration, UNIX_EPOCH};
 
@@ -1843,10 +1817,7 @@ mod tests {
 
     #[test]
     fn file_type_mapping_symlink() {
-        assert_eq!(
-            fs_file_type_to_fuse(FsFileType::Symlink),
-            FileType::Symlink
-        );
+        assert_eq!(fs_file_type_to_fuse(FsFileType::Symlink), FileType::Symlink);
     }
 
     #[test]
@@ -1867,18 +1838,12 @@ mod tests {
 
     #[test]
     fn file_type_mapping_fifo() {
-        assert_eq!(
-            fs_file_type_to_fuse(FsFileType::Fifo),
-            FileType::NamedPipe
-        );
+        assert_eq!(fs_file_type_to_fuse(FsFileType::Fifo), FileType::NamedPipe);
     }
 
     #[test]
     fn file_type_mapping_socket() {
-        assert_eq!(
-            fs_file_type_to_fuse(FsFileType::Socket),
-            FileType::Socket
-        );
+        assert_eq!(fs_file_type_to_fuse(FsFileType::Socket), FileType::Socket);
     }
 
     #[test]
@@ -1898,15 +1863,27 @@ mod tests {
         let meta = FsMetadata {
             ino: 42,
             file_type: FsFileType::RegularFile,
-            mode: 0o100644,
+            mode: 0o100_644,
             uid: 1000,
             gid: 1000,
             size: 100,
             links_count: 1,
-            atime: FsTimestamp { seconds: 1_700_000_000, nanoseconds: 0 },
-            mtime: FsTimestamp { seconds: 1_700_000_000, nanoseconds: 0 },
-            ctime: FsTimestamp { seconds: 1_700_000_000, nanoseconds: 0 },
-            crtime: FsTimestamp { seconds: 1_700_000_000, nanoseconds: 0 },
+            atime: FsTimestamp {
+                seconds: 1_700_000_000,
+                nanoseconds: 0,
+            },
+            mtime: FsTimestamp {
+                seconds: 1_700_000_000,
+                nanoseconds: 0,
+            },
+            ctime: FsTimestamp {
+                seconds: 1_700_000_000,
+                nanoseconds: 0,
+            },
+            crtime: FsTimestamp {
+                seconds: 1_700_000_000,
+                nanoseconds: 0,
+            },
             allocated: true,
         };
         let attr = fs_to_attr(1012, &meta);
@@ -1946,7 +1923,7 @@ mod tests {
         let meta = FsMetadata {
             ino: 10,
             file_type: FsFileType::Symlink,
-            mode: 0o120777,
+            mode: 0o120_777,
             uid: 0,
             gid: 0,
             size: 11,
@@ -1967,7 +1944,7 @@ mod tests {
         let meta = FsMetadata {
             ino: 42,
             file_type: FsFileType::RegularFile,
-            mode: 0o100644,
+            mode: 0o100_644,
             uid: 0,
             gid: 0,
             size: 1000,
@@ -1988,7 +1965,7 @@ mod tests {
         let meta = FsMetadata {
             ino: 1,
             file_type: FsFileType::RegularFile,
-            mode: 0o100644,
+            mode: 0o100_644,
             uid: 0,
             gid: 0,
             size: 0,
@@ -2091,15 +2068,43 @@ mod tests {
         fn read_dir(&mut self, ino: u64) -> FsResult<Vec<FsDirEntry>> {
             match ino {
                 2 => Ok(vec![
-                    FsDirEntry { inode: 2, name: b".".to_vec(), file_type: FsFileType::Directory },
-                    FsDirEntry { inode: 2, name: b"..".to_vec(), file_type: FsFileType::Directory },
-                    FsDirEntry { inode: 10, name: b"hello.txt".to_vec(), file_type: FsFileType::RegularFile },
-                    FsDirEntry { inode: 11, name: b"subdir".to_vec(), file_type: FsFileType::Directory },
+                    FsDirEntry {
+                        inode: 2,
+                        name: b".".to_vec(),
+                        file_type: FsFileType::Directory,
+                    },
+                    FsDirEntry {
+                        inode: 2,
+                        name: b"..".to_vec(),
+                        file_type: FsFileType::Directory,
+                    },
+                    FsDirEntry {
+                        inode: 10,
+                        name: b"hello.txt".to_vec(),
+                        file_type: FsFileType::RegularFile,
+                    },
+                    FsDirEntry {
+                        inode: 11,
+                        name: b"subdir".to_vec(),
+                        file_type: FsFileType::Directory,
+                    },
                 ]),
                 11 => Ok(vec![
-                    FsDirEntry { inode: 11, name: b".".to_vec(), file_type: FsFileType::Directory },
-                    FsDirEntry { inode: 2, name: b"..".to_vec(), file_type: FsFileType::Directory },
-                    FsDirEntry { inode: 12, name: b"nested.txt".to_vec(), file_type: FsFileType::RegularFile },
+                    FsDirEntry {
+                        inode: 11,
+                        name: b".".to_vec(),
+                        file_type: FsFileType::Directory,
+                    },
+                    FsDirEntry {
+                        inode: 2,
+                        name: b"..".to_vec(),
+                        file_type: FsFileType::Directory,
+                    },
+                    FsDirEntry {
+                        inode: 12,
+                        name: b"nested.txt".to_vec(),
+                        file_type: FsFileType::RegularFile,
+                    },
                 ]),
                 _ => Err(FsError::NotFound(format!("inode {ino}"))),
             }
@@ -2112,24 +2117,43 @@ mod tests {
 
         fn metadata(&mut self, ino: u64) -> FsResult<FsMetadata> {
             let (file_type, size) = match ino {
-                2 => (FsFileType::Directory, 4096),
+                2 | 11 => (FsFileType::Directory, 4096),
                 10 => (FsFileType::RegularFile, 12),
-                11 => (FsFileType::Directory, 4096),
                 12 => (FsFileType::RegularFile, 11),
                 _ => return Err(FsError::NotFound(format!("inode {ino}"))),
             };
             Ok(FsMetadata {
                 ino,
                 file_type,
-                mode: if file_type == FsFileType::Directory { 0o40755 } else { 0o100644 },
+                mode: if file_type == FsFileType::Directory {
+                    0o40755
+                } else {
+                    0o100_644
+                },
                 uid: 1000,
                 gid: 1000,
                 size: size as u64,
-                links_count: if file_type == FsFileType::Directory { 2 } else { 1 },
-                atime: FsTimestamp { seconds: 1700000000, nanoseconds: 0 },
-                mtime: FsTimestamp { seconds: 1700000000, nanoseconds: 0 },
-                ctime: FsTimestamp { seconds: 1700000000, nanoseconds: 0 },
-                crtime: FsTimestamp { seconds: 1699000000, nanoseconds: 0 },
+                links_count: if file_type == FsFileType::Directory {
+                    2
+                } else {
+                    1
+                },
+                atime: FsTimestamp {
+                    seconds: 1_700_000_000,
+                    nanoseconds: 0,
+                },
+                mtime: FsTimestamp {
+                    seconds: 1_700_000_000,
+                    nanoseconds: 0,
+                },
+                ctime: FsTimestamp {
+                    seconds: 1_700_000_000,
+                    nanoseconds: 0,
+                },
+                crtime: FsTimestamp {
+                    seconds: 1_699_000_000,
+                    nanoseconds: 0,
+                },
                 allocated: true,
             })
         }
@@ -2158,7 +2182,7 @@ mod tests {
                 ino: 99,
                 file_type: FsFileType::RegularFile,
                 size: 100,
-                dtime: 1700001000,
+                dtime: 1_700_001_000,
                 recoverability: 0.75,
             }])
         }
@@ -2178,7 +2202,10 @@ mod tests {
 
         fn timeline(&mut self) -> FsResult<Vec<FsTimelineEvent>> {
             Ok(vec![FsTimelineEvent {
-                timestamp: FsTimestamp { seconds: 1700000000, nanoseconds: 0 },
+                timestamp: FsTimestamp {
+                    seconds: 1_700_000_000,
+                    nanoseconds: 0,
+                },
                 event_type: FsEventType::Created,
                 inode: 10,
                 size: 12,
@@ -2221,8 +2248,14 @@ mod tests {
         let cache = fuse.metadata_cache.borrow();
         let mc = cache.as_ref().expect("cache should be populated");
         let sb_str = String::from_utf8_lossy(&mc.superblock_json);
-        assert!(sb_str.contains("mock"), "superblock_json should contain 'mock': {sb_str}");
-        assert!(!mc.timeline_jsonl.is_empty(), "timeline_jsonl should not be empty");
+        assert!(
+            sb_str.contains("mock"),
+            "superblock_json should contain 'mock': {sb_str}"
+        );
+        assert!(
+            !mc.timeline_jsonl.is_empty(),
+            "timeline_jsonl should not be empty"
+        );
     }
 
     #[test]
@@ -2249,7 +2282,9 @@ mod tests {
     fn mock_read_file_range_through_fs() {
         let fuse = make_mock_fuse();
         let mut fs = fuse.fs.borrow_mut();
-        let data = fs.read_file_range(10, 0, 5).expect("read_file_range should succeed");
+        let data = fs
+            .read_file_range(10, 0, 5)
+            .expect("read_file_range should succeed");
         assert_eq!(data, b"Hello");
     }
 
@@ -2287,9 +2322,9 @@ mod tests {
         assert_eq!(attr.gid, 1000);
         assert_eq!(attr.nlink, 1);
         assert_eq!(attr.blksize, 4096);
-        let expected_atime = UNIX_EPOCH + Duration::from_secs(1700000000);
+        let expected_atime = UNIX_EPOCH + Duration::from_secs(1_700_000_000);
         assert_eq!(attr.atime, expected_atime);
-        let expected_crtime = UNIX_EPOCH + Duration::from_secs(1699000000);
+        let expected_crtime = UNIX_EPOCH + Duration::from_secs(1_699_000_000);
         assert_eq!(attr.crtime, expected_crtime);
     }
 
@@ -2311,6 +2346,9 @@ mod tests {
         fuse.ensure_journal_cache();
         let cache = fuse.journal_cache.borrow();
         let entries = cache.as_ref().expect("cache should be populated");
-        assert!(entries.is_empty(), "mock has no journal_transactions override, should be empty");
+        assert!(
+            entries.is_empty(),
+            "mock has no journal_transactions override, should be empty"
+        );
     }
 }

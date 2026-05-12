@@ -1,0 +1,33 @@
+[advisories]
+version = 2
+ignore = []
+
+[licenses]
+version = 2
+allow = [
+    "MIT",
+    "Apache-2.0",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "ISC",
+    "Unicode-3.0",
+    "Zlib",
+]
+
+[bans]
+multiple-versions = "deny"
+wildcards = "allow"
+
+[[bans.skip]]
+name = "cpufeatures"
+reason = "sha2/sha3 vs blake3 require different versions"
+
+[[bans.skip]]
+name = "hashbrown"
+reason = "rusqlite (via hashlink) and ewf (via lru) require different versions"
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]
+allow-git = []

@@ -41,7 +41,7 @@ impl FilterDb for CustomDb {
     }
 }
 
-/// HashKeeper format: lines of "file_id,directory_id,file_name,filesize,md5"
+/// `HashKeeper` format: lines of "`file_id,directory_id,file_name,filesize,md5`"
 /// or simpler format with just MD5 + filename separated by comma/tab.
 pub struct HashKeeperDb {
     hashes: HashSet<String>,
@@ -76,14 +76,14 @@ impl FilterDb for HashKeeperDb {
     }
 }
 
-/// NSRL RDSv3 SQLite database.
+/// NSRL `RDSv3` `SQLite` database.
 pub struct NsrlDb {
     hashes: HashSet<String>,
 }
 
 impl NsrlDb {
     /// Load NSRL database by reading all MD5 hashes into memory.
-    /// For RDSv3 SQLite: SELECT md5 FROM FILE (or similar table).
+    /// For `RDSv3` `SQLite`: SELECT md5 FROM FILE (or similar table).
     /// Falls back to treating the file as a plain text hash list.
     pub fn load(path: &Path) -> io::Result<Self> {
         // Try SQLite first
@@ -98,11 +98,9 @@ impl NsrlDb {
     }
 
     fn load_sqlite(path: &Path) -> io::Result<Self> {
-        let conn = rusqlite::Connection::open_with_flags(
-            path,
-            rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY,
-        )
-        .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
+        let conn =
+            rusqlite::Connection::open_with_flags(path, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)
+                .map_err(io::Error::other)?;
 
         let mut hashes = HashSet::new();
 
@@ -149,6 +147,12 @@ pub struct FilterChain {
     dbs: Vec<Box<dyn FilterDb>>,
 }
 
+impl Default for FilterChain {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl FilterChain {
     pub fn new() -> Self {
         Self { dbs: Vec::new() }
@@ -172,7 +176,7 @@ impl FilterDb for FilterChain {
 /// Cached filter results for persistence across sessions.
 #[derive(Debug, Default, serde::Serialize, serde::Deserialize)]
 pub struct FilterCache {
-    /// Map of ext4 inode -> (md5_hash, is_known)
+    /// Map of ext4 inode -> (`md5_hash`, `is_known`)
     pub entries: std::collections::HashMap<u64, FilterCacheEntry>,
 }
 
@@ -184,14 +188,13 @@ pub struct FilterCacheEntry {
 
 impl FilterCache {
     pub fn save(&self, path: &Path) -> io::Result<()> {
-        let json =
-            serde_json::to_string_pretty(self).map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
+        let json = serde_json::to_string_pretty(self).map_err(io::Error::other)?;
         std::fs::write(path, json)
     }
 
     pub fn load(path: &Path) -> io::Result<Self> {
         let json = std::fs::read_to_string(path)?;
-        serde_json::from_str(&json).map_err(|e| io::Error::new(io::ErrorKind::Other, e))
+        serde_json::from_str(&json).map_err(io::Error::other)
     }
 }
 

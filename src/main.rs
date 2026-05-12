@@ -6,7 +6,7 @@ use clap::Parser;
 #[command(
     name = "4n6mount",
     about = "Universal forensic FUSE mount — auto-detects ext4, NTFS, exFAT",
-    version,
+    version
 )]
 struct Cli {
     /// Image file to mount (positional, required unless exporting/importing)
@@ -122,37 +122,49 @@ fn main() {
     // Create ForensicFs based on detected type
     let forensic_fs: Box<dyn forensic_mount::ForensicFs + Send> = match fs_type {
         #[cfg(feature = "ext4")]
-        forensic_mount::detect::FsType::Ext4 => {
-            Box::new(forensic_mount::fs_ext4::Ext4ForensicFs::new(file).unwrap_or_else(|e| {
+        forensic_mount::detect::FsType::Ext4 => Box::new(
+            forensic_mount::fs_ext4::Ext4ForensicFs::new(file).unwrap_or_else(|e| {
                 eprintln!("Cannot parse ext4: {e}");
                 std::process::exit(1);
-            }))
-        }
+            }),
+        ),
         #[cfg(feature = "ewf")]
         forensic_mount::detect::FsType::Ewf => {
-            let mut ewf_reader = ewf::EwfReader::open(&image)
-                .unwrap_or_else(|e| { eprintln!("Cannot open EWF image: {e}"); std::process::exit(1); });
+            let mut ewf_reader = ewf::EwfReader::open(&image).unwrap_or_else(|e| {
+                eprintln!("Cannot open EWF image: {e}");
+                std::process::exit(1);
+            });
 
             // Detect filesystem inside the EWF container
             let inner_fs_type = forensic_mount::detect::detect_filesystem(&mut ewf_reader)
-                .unwrap_or_else(|e| { eprintln!("Cannot detect filesystem in EWF: {e}"); std::process::exit(1); });
+                .unwrap_or_else(|e| {
+                    eprintln!("Cannot detect filesystem in EWF: {e}");
+                    std::process::exit(1);
+                });
 
             eprintln!("EWF container detected, inner filesystem: {inner_fs_type}");
 
             match inner_fs_type {
                 #[cfg(feature = "ext4")]
-                forensic_mount::detect::FsType::Ext4 => {
-                    Box::new(forensic_mount::fs_ext4::Ext4ForensicFs::new(ewf_reader)
-                        .unwrap_or_else(|e| { eprintln!("Cannot parse ext4 in EWF: {e}"); std::process::exit(1); }))
-                }
+                forensic_mount::detect::FsType::Ext4 => Box::new(
+                    forensic_mount::fs_ext4::Ext4ForensicFs::new(ewf_reader).unwrap_or_else(|e| {
+                        eprintln!("Cannot parse ext4 in EWF: {e}");
+                        std::process::exit(1);
+                    }),
+                ),
                 forensic_mount::detect::FsType::Unknown => {
                     eprintln!("No filesystem detected inside EWF — mounting as raw data");
-                    let filename = std::path::Path::new(&image)
-                        .file_name()
-                        .map(|n| n.to_string_lossy().to_string())
-                        .unwrap_or_else(|| "evidence.bin".to_string());
-                    Box::new(forensic_mount::fs_raw::RawForensicFs::new(ewf_reader, filename)
-                        .unwrap_or_else(|e| { eprintln!("Cannot create raw FS: {e}"); std::process::exit(1); }))
+                    let filename = std::path::Path::new(&image).file_name().map_or_else(
+                        || "evidence.bin".to_string(),
+                        |n| n.to_string_lossy().to_string(),
+                    );
+                    Box::new(
+                        forensic_mount::fs_raw::RawForensicFs::new(ewf_reader, filename)
+                            .unwrap_or_else(|e| {
+                                eprintln!("Cannot create raw FS: {e}");
+                                std::process::exit(1);
+                            }),
+                    )
                 }
                 other => {
                     eprintln!("Filesystem '{other}' inside EWF is not supported");
@@ -172,23 +184,17 @@ fn main() {
     let session_mgr = cli.session.map(|dir| {
         let session_path = std::path::Path::new(&dir);
         if cli.resume {
-            forensic_mount::session::Session::resume(
-                session_path,
-                std::path::Path::new(&image),
-            )
-            .unwrap_or_else(|e| {
-                eprintln!("Cannot resume session: {e}");
-                std::process::exit(1);
-            })
+            forensic_mount::session::Session::resume(session_path, std::path::Path::new(&image))
+                .unwrap_or_else(|e| {
+                    eprintln!("Cannot resume session: {e}");
+                    std::process::exit(1);
+                })
         } else {
-            forensic_mount::session::Session::create(
-                session_path,
-                std::path::Path::new(&image),
-            )
-            .unwrap_or_else(|e| {
-                eprintln!("Cannot create session: {e}");
-                std::process::exit(1);
-            })
+            forensic_mount::session::Session::create(session_path, std::path::Path::new(&image))
+                .unwrap_or_else(|e| {
+                    eprintln!("Cannot create session: {e}");
+                    std::process::exit(1);
+                })
         }
     });
 
@@ -245,16 +251,27 @@ mod tests {
 
     #[test]
     fn parse_mount_with_resume() {
-        let cli = Cli::parse_from(["4n6mount", "image.dd", "/mnt", "--session", "./case", "--resume"]);
+        let cli = Cli::parse_from([
+            "4n6mount",
+            "image.dd",
+            "/mnt",
+            "--session",
+            "./case",
+            "--resume",
+        ]);
         assert!(cli.resume);
     }
 
     #[test]
     fn parse_mount_with_filter_dbs() {
         let cli = Cli::parse_from([
-            "4n6mount", "image.dd", "/mnt",
-            "--filter-db", "/path/nsrl.db",
-            "--filter-db", "/path/custom.txt",
+            "4n6mount",
+            "image.dd",
+            "/mnt",
+            "--filter-db",
+            "/path/nsrl.db",
+            "--filter-db",
+            "/path/custom.txt",
         ]);
         assert_eq!(cli.filter_dbs.len(), 2);
     }
@@ -263,8 +280,10 @@ mod tests {
     fn parse_export_session() {
         let cli = Cli::parse_from([
             "4n6mount",
-            "--export-session", "./case-001",
-            "--output", "case.tar.gz",
+            "--export-session",
+            "./case-001",
+            "--output",
+            "case.tar.gz",
         ]);
         assert_eq!(cli.export_session.unwrap(), "./case-001");
         assert_eq!(cli.output.unwrap(), "case.tar.gz");
@@ -275,8 +294,10 @@ mod tests {
     fn parse_import_session() {
         let cli = Cli::parse_from([
             "4n6mount",
-            "--import-session", "case.tar.gz",
-            "--session", "./case-002",
+            "--import-session",
+            "case.tar.gz",
+            "--session",
+            "./case-002",
         ]);
         assert_eq!(cli.import_session.unwrap(), "case.tar.gz");
         assert_eq!(cli.session.unwrap(), "./case-002");
@@ -285,12 +306,17 @@ mod tests {
     #[test]
     fn parse_all_options() {
         let cli = Cli::parse_from([
-            "4n6mount", "image.E01", "/mnt/evidence",
-            "--fs", "ext4",
-            "--session", "./case",
+            "4n6mount",
+            "image.E01",
+            "/mnt/evidence",
+            "--fs",
+            "ext4",
+            "--session",
+            "./case",
             "--resume",
             "--daemon",
-            "--filter-db", "nsrl.db",
+            "--filter-db",
+            "nsrl.db",
         ]);
         assert_eq!(cli.image.unwrap(), "image.E01");
         assert_eq!(cli.mountpoint.unwrap(), "/mnt/evidence");

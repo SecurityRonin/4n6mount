@@ -1,11 +1,11 @@
 #![forbid(unsafe_code)]
 
 pub mod detect;
-pub mod types;
-pub mod inode_map;
-pub mod session;
 pub mod filter;
 pub mod fusefs;
+pub mod inode_map;
+pub mod session;
+pub mod types;
 
 #[cfg(unix)]
 pub mod fuse_unix;
@@ -24,7 +24,7 @@ use std::path::Path;
 /// Mount options for the FUSE filesystem.
 ///
 /// Platform-agnostic configuration consumed by both the Unix (fuser)
-/// and Windows (WinFSP) mount backends.
+/// and Windows (`WinFSP`) mount backends.
 pub struct MountOptions {
     pub read_only: bool,
     pub daemon: bool,
@@ -112,7 +112,7 @@ pub trait ForensicFs {
     }
 }
 
-/// Mount a forensic filesystem via FUSE (or WinFSP on Windows).
+/// Mount a forensic filesystem via FUSE (or `WinFSP` on Windows).
 ///
 /// This is the main entry point for consumers.  Pass a `ForensicFs`
 /// implementation and a `MountOptions`, and this dispatches to the
