@@ -70,37 +70,37 @@ pub fn decode_fuse_ino(ino: u64) -> InodeNamespace {
 
 /// Encode a real ext4 inode for the ro/ namespace.
 pub fn ro_ino(ext4_ino: u64) -> u64 {
-    ext4_ino + RO_INODE_OFFSET
+    ext4_ino.saturating_add(RO_INODE_OFFSET)
 }
 
 /// Encode an overlay inode for the rw/ namespace.
 pub fn rw_ino(ext4_ino: u64) -> u64 {
-    ext4_ino + RW_INODE_OFFSET
+    ext4_ino.saturating_add(RW_INODE_OFFSET)
 }
 
 /// Encode a deleted inode for the deleted/ namespace.
 pub fn deleted_ino(ext4_ino: u64) -> u64 {
-    ext4_ino + DELETED_INODE_OFFSET
+    ext4_ino.saturating_add(DELETED_INODE_OFFSET)
 }
 
 /// Encode a metadata virtual inode.
 pub fn metadata_ino(id: u64) -> u64 {
-    id + METADATA_INODE_OFFSET
+    id.saturating_add(METADATA_INODE_OFFSET)
 }
 
 /// Encode a journal virtual inode.
 pub fn journal_ino(seq: u64) -> u64 {
-    seq + JOURNAL_INODE_OFFSET
+    seq.saturating_add(JOURNAL_INODE_OFFSET)
 }
 
 /// Encode an evidence filtered view inode.
 pub fn evidence_ino(ext4_ino: u64) -> u64 {
-    ext4_ino + EVIDENCE_INODE_OFFSET
+    ext4_ino.saturating_add(EVIDENCE_INODE_OFFSET)
 }
 
 /// Encode an unallocated range virtual inode.
 pub fn unallocated_ino(id: u64) -> u64 {
-    id + UNALLOCATED_INODE_OFFSET
+    id.saturating_add(UNALLOCATED_INODE_OFFSET)
 }
 
 #[cfg(test)]
