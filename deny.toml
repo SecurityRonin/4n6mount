@@ -16,7 +16,7 @@ allow = [
 
 [bans]
 multiple-versions = "deny"
-wildcards = "allow"
+wildcards = "allow" # path deps (ext4fs, ewf) have no version field; cargo-deny counts these as wildcards
 
 [[bans.skip]]
 name = "cpufeatures"
