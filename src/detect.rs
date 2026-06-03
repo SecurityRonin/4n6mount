@@ -146,6 +146,29 @@ mod tests {
         assert_eq!(detect_filesystem(&mut cursor).unwrap(), FsType::Unknown);
     }
 
+    /// ISO 9660: "CD001" at byte 1 of sector 16 (offset 16*2048 = 32768).
+    fn make_iso_image() -> Vec<u8> {
+        let mut data = vec![0u8; 18 * 2048];
+        let pvd = 16 * 2048;
+        data[pvd] = 0x01;
+        data[pvd + 1..pvd + 6].copy_from_slice(b"CD001");
+        data[pvd + 6] = 0x01;
+        data
+    }
+
+    #[test]
+    fn detect_iso() {
+        let data = make_iso_image();
+        let mut cursor = Cursor::new(data);
+        assert_eq!(detect_filesystem(&mut cursor).unwrap(), FsType::Iso);
+    }
+
+    #[test]
+    fn iso_fstype_parses_from_str() {
+        assert_eq!("iso".parse::<FsType>().unwrap(), FsType::Iso);
+        assert_eq!("iso9660".parse::<FsType>().unwrap(), FsType::Iso);
+    }
+
     #[test]
     fn detect_too_short() {
         let data = vec![0u8; 10];
