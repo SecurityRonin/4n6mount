@@ -9,6 +9,7 @@ pub enum FsType {
     Ntfs,
     ExFat,
     Ewf,
+    Iso,
     Unknown,
 }
 
@@ -19,6 +20,7 @@ impl std::fmt::Display for FsType {
             FsType::Ntfs => write!(f, "ntfs"),
             FsType::ExFat => write!(f, "exfat"),
             FsType::Ewf => write!(f, "ewf"),
+            FsType::Iso => write!(f, "iso9660"),
             FsType::Unknown => write!(f, "unknown"),
         }
     }
@@ -32,6 +34,7 @@ impl std::str::FromStr for FsType {
             "ntfs" => Ok(FsType::Ntfs),
             "exfat" => Ok(FsType::ExFat),
             "ewf" | "e01" => Ok(FsType::Ewf),
+            "iso" | "iso9660" | "cd" | "udf" => Ok(FsType::Iso),
             _ => Err(format!("unknown filesystem type: {s}")),
         }
     }
@@ -45,8 +48,10 @@ pub fn detect_filesystem<R: Read + Seek>(source: &mut R) -> io::Result<FsType> {
     // Seek to start
     source.seek(SeekFrom::Start(0))?;
 
-    // Read enough bytes for all checks (need at least 1082 for ext4)
-    let mut buf = vec![0u8; 1082];
+    // Read enough bytes for all checks.  The ISO 9660 volume descriptor lives
+    // at sector 16: byte 32769 for 2048-byte sectors, or 37633 for 2352-byte
+    // raw CD sectors.  Read through the raw-mode offset so both are covered.
+    let mut buf = vec![0u8; 37_640];
     let bytes_read = read_fill(source, &mut buf);
 
     // Reset seek position to start
@@ -73,6 +78,16 @@ pub fn detect_filesystem<R: Read + Seek>(source: &mut R) -> io::Result<FsType> {
         if magic == 0xEF53 {
             return Ok(FsType::Ext4);
         }
+    }
+
+    // Check ISO 9660 / UDF: "CD001" at sector 16.
+    //   2048-byte sectors: offset 32769 (16 * 2048 + 1)
+    //   2352-byte raw CD : offset 37633 (16 * 2352 + 16 + 1)
+    if bytes_read >= 32_774 && &buf[32_769..32_774] == b"CD001" {
+        return Ok(FsType::Iso);
+    }
+    if bytes_read >= 37_638 && &buf[37_633..37_638] == b"CD001" {
+        return Ok(FsType::Iso);
     }
 
     Ok(FsType::Unknown)
