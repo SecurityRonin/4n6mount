@@ -128,6 +128,13 @@ fn main() {
                 std::process::exit(1);
             }),
         ),
+        #[cfg(feature = "iso")]
+        forensic_mount::detect::FsType::Iso => Box::new(
+            forensic_mount::fs_iso::IsoForensicFs::new(file).unwrap_or_else(|e| {
+                eprintln!("Cannot parse ISO 9660: {e}");
+                std::process::exit(1);
+            }),
+        ),
         #[cfg(feature = "ewf")]
         forensic_mount::detect::FsType::Ewf => {
             let mut ewf_reader = ewf::EwfReader::open(&image).unwrap_or_else(|e| {
@@ -149,6 +156,13 @@ fn main() {
                 forensic_mount::detect::FsType::Ext4 => Box::new(
                     forensic_mount::fs_ext4::Ext4ForensicFs::new(ewf_reader).unwrap_or_else(|e| {
                         eprintln!("Cannot parse ext4 in EWF: {e}");
+                        std::process::exit(1);
+                    }),
+                ),
+                #[cfg(feature = "iso")]
+                forensic_mount::detect::FsType::Iso => Box::new(
+                    forensic_mount::fs_iso::IsoForensicFs::new(ewf_reader).unwrap_or_else(|e| {
+                        eprintln!("Cannot parse ISO 9660 in EWF: {e}");
                         std::process::exit(1);
                     }),
                 ),
