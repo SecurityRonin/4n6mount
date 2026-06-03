@@ -14,6 +14,9 @@ pub mod fuse_windows;
 #[cfg(feature = "ext4")]
 pub mod fs_ext4;
 
+#[cfg(feature = "iso")]
+pub mod fs_iso;
+
 pub mod fs_raw;
 
 pub use types::*;
