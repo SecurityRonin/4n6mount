@@ -10,6 +10,7 @@ pub enum FsType {
     ExFat,
     Ewf,
     Iso,
+    Vmdk,
     Unknown,
 }
 
@@ -21,6 +22,7 @@ impl std::fmt::Display for FsType {
             FsType::ExFat => write!(f, "exfat"),
             FsType::Ewf => write!(f, "ewf"),
             FsType::Iso => write!(f, "iso9660"),
+            FsType::Vmdk => write!(f, "vmdk"),
             FsType::Unknown => write!(f, "unknown"),
         }
     }
@@ -60,6 +62,15 @@ pub fn detect_filesystem<R: Read + Seek>(source: &mut R) -> io::Result<FsType> {
     // Check EWF: signature "EVF\x09\x0d\x0a\xff\x00" at byte 0
     if bytes_read >= 8 && buf[0..3] == [0x45, 0x56, 0x46] && buf[3] == 0x09 {
         return Ok(FsType::Ewf);
+    }
+
+    // Check VMDK: sparse/streamOptimized header magic 0x564D444B ("KDMV", LE) at
+    // byte 0, or a text descriptor file. VMDK is a container, like EWF.
+    if bytes_read >= 4 && buf[0..4] == [0x4B, 0x44, 0x4D, 0x56] {
+        return Ok(FsType::Vmdk);
+    }
+    if bytes_read >= 21 && buf[0..21] == *b"# Disk DescriptorFile" {
+        return Ok(FsType::Vmdk);
     }
 
     // Check NTFS: "NTFS" at byte 3
@@ -109,6 +120,26 @@ fn read_fill<R: Read>(source: &mut R, buf: &mut [u8]) -> usize {
 mod tests {
     use super::*;
     use std::io::Cursor;
+
+    #[test]
+    fn detects_vmdk_sparse_magic() {
+        // VMDK sparse/streamOptimized header magic 0x564D444B ("KDMV", LE) at byte 0.
+        let mut data = vec![0u8; 2048];
+        data[0..4].copy_from_slice(b"KDMV");
+        assert_eq!(
+            detect_filesystem(&mut Cursor::new(data)).unwrap(),
+            FsType::Vmdk
+        );
+    }
+
+    #[test]
+    fn detects_vmdk_text_descriptor() {
+        let data = b"# Disk DescriptorFile\nversion=1\n".to_vec();
+        assert_eq!(
+            detect_filesystem(&mut Cursor::new(data)).unwrap(),
+            FsType::Vmdk
+        );
+    }
 
     fn make_ext4_image() -> Vec<u8> {
         // ext4 magic 0xEF53 is at byte offset 1080 (0x438) within the superblock

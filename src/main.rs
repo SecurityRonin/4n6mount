@@ -135,6 +135,54 @@ fn main() {
                 std::process::exit(1);
             }),
         ),
+        #[cfg(feature = "vmdk")]
+        forensic_mount::detect::FsType::Vmdk => {
+            let mut vmdk_reader =
+                vmdk::VmdkFileReader::open_path(std::path::Path::new(&image)).unwrap_or_else(|e| {
+                    eprintln!("Cannot open VMDK image: {e}");
+                    std::process::exit(1);
+                });
+
+            // Detect the filesystem inside the VMDK virtual disk (EWF-style).
+            let inner_fs_type = forensic_mount::detect::detect_filesystem(&mut vmdk_reader)
+                .unwrap_or_else(|e| {
+                    eprintln!("Cannot detect filesystem in VMDK: {e}");
+                    std::process::exit(1);
+                });
+
+            eprintln!("VMDK container detected, inner filesystem: {inner_fs_type}");
+
+            match inner_fs_type {
+                #[cfg(feature = "ext4")]
+                forensic_mount::detect::FsType::Ext4 => Box::new(
+                    forensic_mount::fs_ext4::Ext4ForensicFs::new(vmdk_reader).unwrap_or_else(|e| {
+                        eprintln!("Cannot parse ext4 in VMDK: {e}");
+                        std::process::exit(1);
+                    }),
+                ),
+                #[cfg(feature = "iso")]
+                forensic_mount::detect::FsType::Iso => Box::new(
+                    forensic_mount::fs_iso::IsoForensicFs::new(vmdk_reader).unwrap_or_else(|e| {
+                        eprintln!("Cannot parse ISO 9660 in VMDK: {e}");
+                        std::process::exit(1);
+                    }),
+                ),
+                _ => {
+                    eprintln!("No supported filesystem detected inside VMDK \u{2014} mounting as raw data");
+                    let filename = std::path::Path::new(&image).file_name().map_or_else(
+                        || "evidence.bin".to_string(),
+                        |n| n.to_string_lossy().to_string(),
+                    );
+                    Box::new(
+                        forensic_mount::fs_raw::RawForensicFs::new(vmdk_reader, filename)
+                            .unwrap_or_else(|e| {
+                                eprintln!("Cannot create raw FS: {e}");
+                                std::process::exit(1);
+                            }),
+                    )
+                }
+            }
+        }
         #[cfg(feature = "ewf")]
         forensic_mount::detect::FsType::Ewf => {
             let mut ewf_reader = ewf::EwfReader::open(&image).unwrap_or_else(|e| {
