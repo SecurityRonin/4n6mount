@@ -19,10 +19,10 @@ vmdk = ["dep:vmdk"]
 
 [dependencies]
 clap = { version = "4", features = ["derive"] }
-ext4fs = { package = "ext4fs-core", path = "../ext4fs-forensic/ext4fs-core", optional = true }
-ewf = { path = "../ewf/ewf", optional = true }
-vmdk = { package = "vmdk-core", path = "../vmdk-forensic/core", optional = true }
-iso9660-forensic = { path = "../iso9660-forensic/iso", optional = true }
+ext4fs = { package = "ext4fs-core", version = "0.1.0", path = "../ext4fs-forensic/ext4fs-core", optional = true }
+ewf = { version = "0.2.1", path = "../ewf/ewf", optional = true }
+vmdk = { package = "vmdk-core", version = "0.7.0", path = "../vmdk-forensic/core", optional = true }
+iso9660-forensic = { version = "0.6.0", path = "../iso9660-forensic/iso", optional = true }
 fuser = "0.15"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
