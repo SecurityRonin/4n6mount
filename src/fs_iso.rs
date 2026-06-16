@@ -48,7 +48,13 @@ impl<R: Read + Seek> IsoForensicFs<R> {
         let mut nodes: HashMap<u64, IsoNode> = HashMap::new();
         nodes.insert(
             ROOT_INO,
-            IsoNode { parent: ROOT_INO, name: b"/".to_vec(), is_dir: true, record: None, children: vec![] },
+            IsoNode {
+                parent: ROOT_INO,
+                name: b"/".to_vec(),
+                is_dir: true,
+                record: None,
+                children: vec![],
+            },
         );
 
         let mut path_ino: HashMap<String, u64> = HashMap::new();
@@ -168,10 +174,26 @@ impl<R: Read + Seek> ForensicFs for IsoForensicFs<R> {
             .record
             .as_ref()
             .and_then(|r| rock_ridge::timestamps(&r.system_use));
-        let mtime = tf.as_ref().and_then(|t| t.modify).map(short_ts_to_unix).unwrap_or_default();
-        let atime = tf.as_ref().and_then(|t| t.access).map(short_ts_to_unix).unwrap_or(mtime);
-        let ctime = tf.as_ref().and_then(|t| t.attributes).map(short_ts_to_unix).unwrap_or(mtime);
-        let crtime = tf.as_ref().and_then(|t| t.creation).map(short_ts_to_unix).unwrap_or(mtime);
+        let mtime = tf
+            .as_ref()
+            .and_then(|t| t.modify)
+            .map(short_ts_to_unix)
+            .unwrap_or_default();
+        let atime = tf
+            .as_ref()
+            .and_then(|t| t.access)
+            .map(short_ts_to_unix)
+            .unwrap_or(mtime);
+        let ctime = tf
+            .as_ref()
+            .and_then(|t| t.attributes)
+            .map(short_ts_to_unix)
+            .unwrap_or(mtime);
+        let crtime = tf
+            .as_ref()
+            .and_then(|t| t.creation)
+            .map(short_ts_to_unix)
+            .unwrap_or(mtime);
 
         Ok(FsMetadata {
             ino,
@@ -256,7 +278,10 @@ impl<R: Read + Seek> ForensicFs for IsoForensicFs<R> {
         Ok(gaps
             .into_iter()
             .filter(|g| g.nonzero)
-            .map(|g| FsBlockRange { start: u64::from(g.lba), length: 1 })
+            .map(|g| FsBlockRange {
+                start: u64::from(g.lba),
+                length: 1,
+            })
             .collect())
     }
 
@@ -285,11 +310,20 @@ impl<R: Read + Seek> ForensicFs for IsoForensicFs<R> {
 /// Layout: `[year-1900, month, day, hour, min, sec, tz_offset_15min(i8)]`.
 fn short_ts_to_unix(t: [u8; 7]) -> FsTimestamp {
     let year = 1900_i64 + i64::from(t[0]);
-    let secs = civil_to_unix(year, i64::from(t[1]), i64::from(t[2]),
-        i64::from(t[3]), i64::from(t[4]), i64::from(t[5]));
+    let secs = civil_to_unix(
+        year,
+        i64::from(t[1]),
+        i64::from(t[2]),
+        i64::from(t[3]),
+        i64::from(t[4]),
+        i64::from(t[5]),
+    );
     // tz offset is signed, in 15-minute units; local = utc + offset.
     let tz = i64::from(t[6] as i8) * 15 * 60;
-    FsTimestamp { seconds: secs - tz, nanoseconds: 0 }
+    FsTimestamp {
+        seconds: secs - tz,
+        nanoseconds: 0,
+    }
 }
 
 /// Days/seconds from the Unix epoch for a civil date (Howard Hinnant's algorithm).
@@ -318,13 +352,19 @@ mod tests {
 
     #[test]
     fn root_ino_is_2() {
-        let Some(fs) = open() else { eprintln!("skip"); return; };
+        let Some(fs) = open() else {
+            eprintln!("skip");
+            return;
+        };
         assert_eq!(fs.root_ino(), 2);
     }
 
     #[test]
     fn read_dir_root_has_entries() {
-        let Some(mut fs) = open() else { eprintln!("skip"); return; };
+        let Some(mut fs) = open() else {
+            eprintln!("skip");
+            return;
+        };
         let entries = fs.read_dir(2).unwrap();
         let names: Vec<String> = entries.iter().map(FsDirEntry::name_str).collect();
         assert!(names.contains(&"hello.txt".to_string()), "got: {names:?}");
@@ -332,14 +372,20 @@ mod tests {
 
     #[test]
     fn lookup_finds_file() {
-        let Some(mut fs) = open() else { eprintln!("skip"); return; };
+        let Some(mut fs) = open() else {
+            eprintln!("skip");
+            return;
+        };
         let ino = fs.lookup(2, b"hello.txt").unwrap();
         assert!(ino.is_some(), "hello.txt must be found under root");
     }
 
     #[test]
     fn metadata_root_is_directory() {
-        let Some(mut fs) = open() else { eprintln!("skip"); return; };
+        let Some(mut fs) = open() else {
+            eprintln!("skip");
+            return;
+        };
         let meta = fs.metadata(2).unwrap();
         assert_eq!(meta.file_type, FsFileType::Directory);
         assert!(meta.allocated);
@@ -347,16 +393,25 @@ mod tests {
 
     #[test]
     fn read_file_returns_content() {
-        let Some(mut fs) = open() else { eprintln!("skip"); return; };
+        let Some(mut fs) = open() else {
+            eprintln!("skip");
+            return;
+        };
         let ino = fs.lookup(2, b"hello.txt").unwrap().unwrap();
         let data = fs.read_file(ino).unwrap();
-        assert!(String::from_utf8_lossy(&data).contains("hello from iso corpus"),
-            "got: {:?}", String::from_utf8_lossy(&data));
+        assert!(
+            String::from_utf8_lossy(&data).contains("hello from iso corpus"),
+            "got: {:?}",
+            String::from_utf8_lossy(&data)
+        );
     }
 
     #[test]
     fn read_file_range_returns_prefix() {
-        let Some(mut fs) = open() else { eprintln!("skip"); return; };
+        let Some(mut fs) = open() else {
+            eprintln!("skip");
+            return;
+        };
         let ino = fs.lookup(2, b"hello.txt").unwrap().unwrap();
         let data = fs.read_file_range(ino, 0, 5).unwrap();
         assert_eq!(&data, b"hello");
@@ -364,7 +419,10 @@ mod tests {
 
     #[test]
     fn metadata_file_is_regular() {
-        let Some(mut fs) = open() else { eprintln!("skip"); return; };
+        let Some(mut fs) = open() else {
+            eprintln!("skip");
+            return;
+        };
         let ino = fs.lookup(2, b"hello.txt").unwrap().unwrap();
         let meta = fs.metadata(ino).unwrap();
         assert_eq!(meta.file_type, FsFileType::RegularFile);
@@ -373,7 +431,10 @@ mod tests {
 
     #[test]
     fn lookup_subdir_then_file() {
-        let Some(mut fs) = open() else { eprintln!("skip"); return; };
+        let Some(mut fs) = open() else {
+            eprintln!("skip");
+            return;
+        };
         let sub = fs.lookup(2, b"subdir").unwrap();
         assert!(sub.is_some(), "subdir must be found");
         let sub = sub.unwrap();
@@ -383,20 +444,32 @@ mod tests {
 
     #[test]
     fn block_size_is_2048() {
-        let Some(fs) = open() else { eprintln!("skip"); return; };
+        let Some(fs) = open() else {
+            eprintln!("skip");
+            return;
+        };
         assert_eq!(fs.block_size(), 2048);
     }
 
     #[test]
     fn timeline_has_events() {
-        let Some(mut fs) = open() else { eprintln!("skip"); return; };
+        let Some(mut fs) = open() else {
+            eprintln!("skip");
+            return;
+        };
         let tl = fs.timeline().unwrap();
-        assert!(!tl.is_empty(), "Rock Ridge ISO should yield timeline events");
+        assert!(
+            !tl.is_empty(),
+            "Rock Ridge ISO should yield timeline events"
+        );
     }
 
     #[test]
     fn fs_info_reports_iso() {
-        let Some(fs) = open() else { eprintln!("skip"); return; };
+        let Some(fs) = open() else {
+            eprintln!("skip");
+            return;
+        };
         let info = fs.fs_info().unwrap();
         assert_eq!(info["type"], "iso9660");
         assert_eq!(info["rock_ridge"], true);

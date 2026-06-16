@@ -137,8 +137,8 @@ fn main() {
         ),
         #[cfg(feature = "vmdk")]
         forensic_mount::detect::FsType::Vmdk => {
-            let mut vmdk_reader =
-                vmdk::VmdkFileReader::open_path(std::path::Path::new(&image)).unwrap_or_else(|e| {
+            let mut vmdk_reader = vmdk::VmdkFileReader::open_path(std::path::Path::new(&image))
+                .unwrap_or_else(|e| {
                     eprintln!("Cannot open VMDK image: {e}");
                     std::process::exit(1);
                 });
