@@ -10,6 +10,16 @@ env:
   CARGO_TERM_COLOR: always
   RUSTFLAGS: -Dwarnings
 
+# Every job that runs `cargo metadata` (clippy, test, msrv, deny, geiger) must
+# resolve this crate's path dependencies. The closure is:
+# forensic-mount(4n6mount) -> {ext4fs-core, ewf, iso9660-forensic, vmdk-core};
+# ext4fs-core -> ewf. actions/checkout cannot place a repo outside
+# $GITHUB_WORKSPACE, so we check this repo out under `path: 4n6mount` and the
+# siblings as peer subdirs, matching the `../sibling` relative paths in the
+# manifests, then run cargo with `working-directory: 4n6mount`.
+# The `fuser` crate links libfuse at build time, so build jobs install
+# libfuse3-dev + pkg-config.
+
 jobs:
   fmt:
     name: Format
@@ -28,6 +38,7 @@ jobs:
     name: Clippy
     runs-on: ubuntu-latest
     steps:
+      - run: sudo apt-get update && sudo apt-get install -y libfuse3-dev pkg-config
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
           path: 4n6mount
@@ -39,6 +50,14 @@ jobs:
         with:
           repository: ${{ github.repository_owner }}/ewf
           path: ewf
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          repository: ${{ github.repository_owner }}/iso9660-forensic
+          path: iso9660-forensic
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          repository: ${{ github.repository_owner }}/vmdk-forensic
+          path: vmdk-forensic
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy
@@ -50,6 +69,7 @@ jobs:
     name: Test
     runs-on: ubuntu-latest
     steps:
+      - run: sudo apt-get update && sudo apt-get install -y libfuse3-dev pkg-config
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
           path: 4n6mount
@@ -61,6 +81,14 @@ jobs:
         with:
           repository: ${{ github.repository_owner }}/ewf
           path: ewf
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          repository: ${{ github.repository_owner }}/iso9660-forensic
+          path: iso9660-forensic
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          repository: ${{ github.repository_owner }}/vmdk-forensic
+          path: vmdk-forensic
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@9d47c6ad4b02e050fd481d890b2ea34778fd09d6 # v2.7.8
       - run: cargo test
@@ -70,6 +98,7 @@ jobs:
     name: MSRV (1.85)
     runs-on: ubuntu-latest
     steps:
+      - run: sudo apt-get update && sudo apt-get install -y libfuse3-dev pkg-config
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
           path: 4n6mount
@@ -81,6 +110,14 @@ jobs:
         with:
           repository: ${{ github.repository_owner }}/ewf
           path: ewf
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          repository: ${{ github.repository_owner }}/iso9660-forensic
+          path: iso9660-forensic
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          repository: ${{ github.repository_owner }}/vmdk-forensic
+          path: vmdk-forensic
       - uses: dtolnay/rust-toolchain@1.85
       - uses: Swatinem/rust-cache@9d47c6ad4b02e050fd481d890b2ea34778fd09d6 # v2.7.8
       - run: cargo test
@@ -91,7 +128,32 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
-      - uses: EmbarkStudios/cargo-deny-action@3fd3802e88374d3fe9159b834c7714ec57d6c979 # v2.0.15
+        with:
+          path: 4n6mount
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          repository: ${{ github.repository_owner }}/ext4fs-forensic
+          path: ext4fs-forensic
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          repository: ${{ github.repository_owner }}/ewf
+          path: ewf
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          repository: ${{ github.repository_owner }}/iso9660-forensic
+          path: iso9660-forensic
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          repository: ${{ github.repository_owner }}/vmdk-forensic
+          path: vmdk-forensic
+      - uses: dtolnay/rust-toolchain@stable
+      # cargo-deny is run as a CLI step (not the Docker action) so it can resolve
+      # the crate's path dependencies, checked out as siblings above.
+      - uses: taiki-e/install-action@15449e3094499af05d8d964a1c884208e4b8b595 # v2.81.11
+        with:
+          tool: cargo-deny
+      - run: cargo deny check
+        working-directory: 4n6mount
 
   secrets:
     name: Secret Scan (gitleaks)
@@ -100,15 +162,24 @@ jobs:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
           fetch-depth: 0
-      - uses: gitleaks/gitleaks-action@83373cf2f8c4db6e24b41c1a9b086bb9619e9cd3 # v2.3.7
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      # gitleaks-action v2+ demands a paid GITLEAKS_LICENSE for organization
+      # repos; the upstream binary itself is unrestricted, so we download and
+      # run it directly to keep the secret scan free and license-free.
+      - name: Install gitleaks
+        run: |
+          set -euo pipefail
+          VERSION=8.30.1
+          curl -sSL "https://github.com/gitleaks/gitleaks/releases/download/v${VERSION}/gitleaks_${VERSION}_linux_x64.tar.gz" \
+            | tar -xz -C /usr/local/bin gitleaks
+          gitleaks version
+      - run: gitleaks detect --source . --redact --no-banner -v
 
   geiger:
     name: Unsafe Audit (cargo-geiger)
     runs-on: ubuntu-latest
     continue-on-error: true
     steps:
+      - run: sudo apt-get update && sudo apt-get install -y libfuse3-dev pkg-config
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
           path: 4n6mount
@@ -120,6 +191,14 @@ jobs:
         with:
           repository: ${{ github.repository_owner }}/ewf
           path: ewf
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          repository: ${{ github.repository_owner }}/iso9660-forensic
+          path: iso9660-forensic
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          repository: ${{ github.repository_owner }}/vmdk-forensic
+          path: vmdk-forensic
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@9d47c6ad4b02e050fd481d890b2ea34778fd09d6 # v2.7.8
       - run: cargo install cargo-geiger --locked
