@@ -21,7 +21,7 @@ vmdk = ["dep:vmdk"]
 clap = { version = "4", features = ["derive"] }
 ext4fs = { package = "ext4fs-core", path = "../ext4fs-forensic/ext4fs-core", optional = true }
 ewf = { path = "../ewf/ewf", optional = true }
-vmdk = { path = "../vmdk/vmdk", version = "0.5.1", optional = true }
+vmdk = { package = "vmdk-core", path = "../vmdk-forensic/core", optional = true }
 iso9660-forensic = { path = "../iso9660-forensic/iso", optional = true }
 fuser = "0.15"
 serde = { version = "1", features = ["derive"] }
