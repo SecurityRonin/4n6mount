@@ -180,7 +180,7 @@ You get ro/, rw/, deleted/, journal/, metadata/, session management, and evidenc
 | [**blazehash**](https://github.com/SecurityRonin/blazehash) | Forensic file hasher — hashdeep for the modern era |
 | **4n6mount** | Universal forensic FUSE mount (this crate) |
 
-All pure Rust. All MIT licensed. All designed to work together.
+All pure Rust. All Apache-2.0 licensed. All designed to work together.
 
 ## Acknowledgments
 
@@ -191,4 +191,4 @@ This project builds on decades of work by the digital forensics community:
 
 ## License
 
-MIT
+Apache-2.0

@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2021"
 rust-version = "1.85"
 description = "Universal forensic FUSE mount framework with ForensicFs trait"
-license = "MIT"
+license = "Apache-2.0"
 
 [[bin]]
 name = "4n6mount"
