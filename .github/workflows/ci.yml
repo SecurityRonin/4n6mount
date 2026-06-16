@@ -62,7 +62,7 @@ jobs:
         with:
           components: clippy
       - uses: Swatinem/rust-cache@9d47c6ad4b02e050fd481d890b2ea34778fd09d6 # v2.7.8
-      - run: cargo clippy --all-targets -- -D warnings
+      - run: cargo clippy --all-targets --locked -- -D warnings
         working-directory: 4n6mount
 
   test:
@@ -91,7 +91,7 @@ jobs:
           path: vmdk-forensic
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@9d47c6ad4b02e050fd481d890b2ea34778fd09d6 # v2.7.8
-      - run: cargo test
+      - run: cargo test --locked
         working-directory: 4n6mount
 
   msrv:
@@ -120,7 +120,7 @@ jobs:
           path: vmdk-forensic
       - uses: dtolnay/rust-toolchain@1.85
       - uses: Swatinem/rust-cache@9d47c6ad4b02e050fd481d890b2ea34778fd09d6 # v2.7.8
-      - run: cargo test
+      - run: cargo test --locked
         working-directory: 4n6mount
 
   deny:
@@ -152,7 +152,7 @@ jobs:
       - uses: taiki-e/install-action@15449e3094499af05d8d964a1c884208e4b8b595 # v2.81.11
         with:
           tool: cargo-deny
-      - run: cargo deny check
+      - run: cargo deny --locked check
         working-directory: 4n6mount
 
   secrets:

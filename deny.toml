@@ -1,6 +1,14 @@
 [advisories]
 version = 2
-ignore = []
+ignore = [
+    # fuser 0.15.1: uninitialized-memory unsoundness in libfuse session init.
+    # Patched in fuser >= 0.16.0, but 0.16's build script dropped non-Linux
+    # libfuse support (breaks macOS dev builds) and 0.17 is a breaking
+    # Filesystem-trait rewrite (INodeNo/FileHandle/OpenFlags newtypes, &self
+    # receivers). Tracked for a dedicated fuser-0.17 migration; low risk for a
+    # read-only forensic mount.
+    "RUSTSEC-2021-0154",
+]
 
 [licenses]
 version = 2
