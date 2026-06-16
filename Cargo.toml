@@ -19,7 +19,7 @@ vmdk = ["dep:vmdk"]
 
 [dependencies]
 clap = { version = "4", features = ["derive"] }
-ext4fs = { path = "../ext4fs-forensic/ext4fs", optional = true }
+ext4fs = { package = "ext4fs-core", path = "../ext4fs-forensic/ext4fs-core", optional = true }
 ewf = { path = "../ewf/ewf", optional = true }
 vmdk = { path = "../vmdk/vmdk", version = "0.5.1", optional = true }
 iso9660-forensic = { path = "../iso9660-forensic/iso", optional = true }
