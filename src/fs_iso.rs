@@ -156,17 +156,16 @@ impl<R: Read + Seek> ForensicFs for IsoForensicFs<R> {
             .record
             .as_ref()
             .and_then(|r| rock_ridge::posix_attrs(&r.system_use));
-        let (mode, uid, gid, nlink) = match px {
-            Some(p) => (
+        let (mode, uid, gid, nlink) = if let Some(p) = px {
+            (
                 (p.mode & 0o7777) as u16,
                 p.uid,
                 p.gid,
                 p.nlink.min(u32::from(u16::MAX)) as u16,
-            ),
-            None => {
-                let m = if node.is_dir { 0o555 } else { 0o444 };
-                (m, 0, 0, 1)
-            }
+            )
+        } else {
+            let m = if node.is_dir { 0o555 } else { 0o444 };
+            (m, 0, 0, 1)
         };
 
         // Rock Ridge timestamps (short form), if present.
@@ -182,18 +181,15 @@ impl<R: Read + Seek> ForensicFs for IsoForensicFs<R> {
         let atime = tf
             .as_ref()
             .and_then(|t| t.access)
-            .map(short_ts_to_unix)
-            .unwrap_or(mtime);
+            .map_or(mtime, short_ts_to_unix);
         let ctime = tf
             .as_ref()
             .and_then(|t| t.attributes)
-            .map(short_ts_to_unix)
-            .unwrap_or(mtime);
+            .map_or(mtime, short_ts_to_unix);
         let crtime = tf
             .as_ref()
             .and_then(|t| t.creation)
-            .map(short_ts_to_unix)
-            .unwrap_or(mtime);
+            .map_or(mtime, short_ts_to_unix);
 
         Ok(FsMetadata {
             ino,
