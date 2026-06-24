@@ -30,6 +30,9 @@ pub mod fs_sevenz;
 #[cfg(feature = "ntfs")]
 pub mod fs_ntfs;
 
+#[cfg(feature = "hfsplus")]
+pub mod fs_hfsplus;
+
 pub mod fs_raw;
 
 pub use types::*;
