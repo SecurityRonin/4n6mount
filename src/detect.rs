@@ -88,6 +88,30 @@ pub fn detect_filesystem<R: Read + Seek>(source: &mut R) -> io::Result<FsType> {
         return Ok(FsType::Vmdk);
     }
 
+    // Check archives by their byte-0 signatures. These are terminal containers
+    // that expose a file tree directly (no inner filesystem to recurse into).
+    //   gzip: 1f 8b  (a .tar.gz / .tgz; a bare .gz is decoded as a 1-file tar)
+    //   zip : "PK\x03\x04" (local file header) or "PK\x05\x06" (empty archive)
+    //   7z  : 37 7a bc af 27 1c
+    if bytes_read >= 2 && buf[0] == 0x1F && buf[1] == 0x8B {
+        return Ok(FsType::TarGz);
+    }
+    if bytes_read >= 4
+        && buf[0..2] == [0x50, 0x4B]
+        && matches!(buf[2..4], [0x03, 0x04] | [0x05, 0x06] | [0x07, 0x08])
+    {
+        return Ok(FsType::Zip);
+    }
+    if bytes_read >= 6 && buf[0..6] == [0x37, 0x7A, 0xBC, 0xAF, 0x27, 0x1C] {
+        return Ok(FsType::SevenZ);
+    }
+
+    // Check APFS: container superblock magic "NXSB" at byte 32 (after the
+    // 32-byte obj_phys_t object header of block 0).
+    if bytes_read >= 36 && &buf[32..36] == b"NXSB" {
+        return Ok(FsType::Apfs);
+    }
+
     // Check NTFS: "NTFS" at byte 3
     if bytes_read >= 7 && &buf[3..7] == b"NTFS" {
         return Ok(FsType::Ntfs);
@@ -96,6 +120,12 @@ pub fn detect_filesystem<R: Read + Seek>(source: &mut R) -> io::Result<FsType> {
     // Check exFAT: "EXFAT" at byte 3
     if bytes_read >= 8 && &buf[3..8] == b"EXFAT" {
         return Ok(FsType::ExFat);
+    }
+
+    // Check HFS+/HFSX: volume header at byte 1024; signature "H+" (0x482B) for
+    // HFS+, "HX" (0x4858) for the case-sensitive HFSX variant.
+    if bytes_read >= 1026 && buf[1024] == 0x48 && (buf[1025] == 0x2B || buf[1025] == 0x58) {
+        return Ok(FsType::Hfsplus);
     }
 
     // Check ext4: magic 0xEF53 at byte 1080 (little-endian)
