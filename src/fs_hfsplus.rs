@@ -33,9 +33,56 @@ impl HfsPlusForensicFs {
     ///
     /// [`FsError::Corrupt`] if the volume header is not HFS+ or the catalog
     /// cannot be walked.
-    pub fn new<R: Read + Seek>(source: R) -> Result<Self, FsError> {
-        let _ = (source, SeekFrom::Start(0), FsTimestamp::default());
-        todo!("HfsPlusForensicFs::new")
+    pub fn new<R: Read + Seek>(mut source: R) -> Result<Self, FsError> {
+        source.seek(SeekFrom::Start(0)).map_err(FsError::Io)?;
+        let mut buf = Vec::new();
+        source.read_to_end(&mut buf).map_err(FsError::Io)?;
+
+        hfsplus_forensic::parse(&buf)
+            .ok_or_else(|| FsError::Corrupt("not an HFS+/HFSX volume".to_string()))?;
+        let entries = hfsplus_forensic::walk(&buf)
+            .ok_or_else(|| FsError::Corrupt("HFS+ catalog walk failed".to_string()))?;
+
+        let mut tree = ArchiveTree::new();
+        let mut data: Vec<Vec<u8>> = Vec::new();
+        let mut decompress_failures = 0usize;
+
+        for entry in entries {
+            // walk() yields root-relative paths; strip a leading '/' so the tree
+            // builder (which rejects absolute paths) accepts them.
+            let path = entry.path.strip_prefix('/').unwrap_or(&entry.path);
+            if path.is_empty() {
+                continue;
+            }
+            if entry.is_dir {
+                tree.insert(path, true, 0, FsTimestamp::default(), None);
+            } else {
+                match hfsplus_forensic::read_file(&buf, entry.cnid) {
+                    Some(bytes) => {
+                        let id = data.len();
+                        if tree
+                            .insert(
+                                path,
+                                false,
+                                bytes.len() as u64,
+                                FsTimestamp::default(),
+                                Some(id),
+                            )
+                            .is_some()
+                        {
+                            data.push(bytes);
+                        }
+                    }
+                    None => decompress_failures += 1,
+                }
+            }
+        }
+
+        Ok(Self {
+            tree,
+            data,
+            decompress_failures,
+        })
     }
 }
 
