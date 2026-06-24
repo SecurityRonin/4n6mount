@@ -32,9 +32,36 @@ impl SevenZForensicFs {
     /// # Errors
     ///
     /// [`FsError::Corrupt`] if the archive headers or streams are malformed.
-    pub fn new<R: Read + Seek>(source: R) -> Result<Self, FsError> {
-        let _ = (source, SeekFrom::Start(0), FsTimestamp::default());
-        todo!("SevenZForensicFs::new")
+    pub fn new<R: Read + Seek>(mut source: R) -> Result<Self, FsError> {
+        let len = source.seek(SeekFrom::End(0)).map_err(FsError::Io)?;
+        source.seek(SeekFrom::Start(0)).map_err(FsError::Io)?;
+        let mut reader = SevenZReader::new(source, len, Password::empty())
+            .map_err(|e| FsError::Corrupt(format!("not a 7z: {e}")))?;
+
+        let mut tree = ArchiveTree::new();
+        let mut data: Vec<Vec<u8>> = Vec::new();
+        reader
+            .for_each_entries(|entry, rdr| {
+                let name = entry.name().to_string();
+                let mtime = filetime_to_ts(entry.last_modified_date().to_raw());
+                if entry.is_directory() {
+                    tree.insert(&name, true, 0, mtime, None);
+                } else {
+                    let mut buf = Vec::new();
+                    rdr.read_to_end(&mut buf)?;
+                    let id = data.len();
+                    if tree
+                        .insert(&name, false, buf.len() as u64, mtime, Some(id))
+                        .is_some()
+                    {
+                        data.push(buf);
+                    }
+                }
+                Ok(true)
+            })
+            .map_err(|e| FsError::Corrupt(format!("7z: {e}")))?;
+
+        Ok(Self { tree, data })
     }
 }
 
