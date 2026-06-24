@@ -24,6 +24,9 @@ pub mod fs_tar;
 #[cfg(feature = "zip")]
 pub mod fs_zip;
 
+#[cfg(feature = "sevenz")]
+pub mod fs_sevenz;
+
 pub mod fs_raw;
 
 pub use types::*;
