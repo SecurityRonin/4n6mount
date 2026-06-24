@@ -10,8 +10,8 @@
 //!
 //! ZIP is a read-only archive: no deleted inodes, no journal, no overlay.
 
-use crate::archive_tree::ArchiveTree;
-use crate::{not_supported, ForensicFs, FsDirEntry, FsError, FsMetadata, FsResult};
+use crate::archive_tree::{civil_to_unix, ArchiveTree};
+use crate::{not_supported, ForensicFs, FsDirEntry, FsError, FsMetadata, FsResult, FsTimestamp};
 use std::io::{Read, Seek};
 
 /// `ForensicFs` implementation for ZIP archives.
@@ -27,8 +27,38 @@ impl<R: Read + Seek> ZipForensicFs<R> {
     ///
     /// [`FsError::Corrupt`] if the central directory cannot be read.
     pub fn new(source: R) -> Result<Self, FsError> {
-        let _ = source;
-        todo!("ZipForensicFs::new")
+        let mut archive = zip::ZipArchive::new(source)
+            .map_err(|e| FsError::Corrupt(format!("not a zip: {e}")))?;
+        let mut tree = ArchiveTree::new();
+        for i in 0..archive.len() {
+            let entry = archive
+                .by_index(i)
+                .map_err(|e| FsError::Corrupt(format!("zip entry {i}: {e}")))?;
+            let name = entry.name().to_string();
+            let is_dir = entry.is_dir();
+            let size = entry.size();
+            let mtime = entry
+                .last_modified()
+                .map_or_else(FsTimestamp::default, |dt| FsTimestamp {
+                    seconds: civil_to_unix(
+                        i64::from(dt.year()),
+                        i64::from(dt.month()),
+                        i64::from(dt.day()),
+                        i64::from(dt.hour()),
+                        i64::from(dt.minute()),
+                        i64::from(dt.second()),
+                    ),
+                    nanoseconds: 0,
+                });
+            tree.insert(
+                &name,
+                is_dir,
+                size,
+                mtime,
+                if is_dir { None } else { Some(i) },
+            );
+        }
+        Ok(Self { archive, tree })
     }
 }
 

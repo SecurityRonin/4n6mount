@@ -214,6 +214,20 @@ fn sanitize_path(path: &str) -> Option<Vec<Vec<u8>>> {
     Some(out)
 }
 
+/// Seconds from the Unix epoch for a civil UTC date (Howard Hinnant's
+/// algorithm). Shared by archive formats whose entry timestamps are broken-down
+/// calendar fields (e.g. ZIP's MS-DOS date, 7z's component date).
+pub(crate) fn civil_to_unix(y: i64, m: i64, d: i64, hh: i64, mm: i64, ss: i64) -> i64 {
+    let y = if m <= 2 { y - 1 } else { y };
+    let era = if y >= 0 { y } else { y - 399 } / 400;
+    let yoe = y - era * 400;
+    let mp = (m + 9) % 12;
+    let doy = (153 * mp + 2) / 5 + d - 1;
+    let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+    let days = era * 146_097 + doe - 719_468;
+    days * 86_400 + hh * 3_600 + mm * 60 + ss
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
