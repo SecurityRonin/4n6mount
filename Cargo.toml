@@ -11,12 +11,13 @@ name = "4n6mount"
 path = "src/main.rs"
 
 [features]
-default = ["ext4", "ewf", "iso", "vmdk", "targz"]
+default = ["ext4", "ewf", "iso", "vmdk", "targz", "zip"]
 ext4 = ["dep:ext4fs"]
 ewf = ["dep:ewf"]
 iso = ["dep:iso9660-forensic"]
 vmdk = ["dep:vmdk"]
 targz = ["dep:tar", "dep:flate2"]
+zip = ["dep:zip"]
 
 [dependencies]
 clap = { version = "4", features = ["derive"] }
@@ -33,6 +34,7 @@ rusqlite = { version = "0.31", features = ["bundled"] }
 libc = "0.2"
 tar = { version = "0.4", optional = true }
 flate2 = { version = "1", optional = true }
+zip = { version = "2", optional = true }
 
 [lints.rust]
 unsafe_code = "forbid"

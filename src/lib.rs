@@ -21,6 +21,9 @@ pub mod fs_iso;
 #[cfg(feature = "targz")]
 pub mod fs_tar;
 
+#[cfg(feature = "zip")]
+pub mod fs_zip;
+
 pub mod fs_raw;
 
 pub use types::*;
