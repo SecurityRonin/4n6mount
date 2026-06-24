@@ -68,8 +68,101 @@ impl<R: Read + Seek> NtfsForensicFs<R> {
     ///
     /// [`FsError::Corrupt`] if the boot sector or `$MFT` cannot be parsed.
     pub fn new(source: R) -> Result<Self, FsError> {
-        let _ = (source, ROOT_INO, MAX_NODES, ts(Filetime(0)));
-        todo!("NtfsForensicFs::new")
+        let mut fs =
+            NtfsFs::open(source).map_err(|e| FsError::Corrupt(format!("not NTFS: {e}")))?;
+
+        let mut nodes: HashMap<u64, NtfsNode> = HashMap::new();
+        nodes.insert(
+            ROOT_INO,
+            NtfsNode {
+                name: b"/".to_vec(),
+                is_dir: true,
+                size: 0,
+                atime: FsTimestamp::default(),
+                mtime: FsTimestamp::default(),
+                ctime: FsTimestamp::default(),
+                crtime: FsTimestamp::default(),
+                path: String::new(),
+                children: vec![],
+            },
+        );
+        let mut index: HashMap<(u64, Vec<u8>), u64> = HashMap::new();
+
+        // Iterative DFS from the root directory. `visited` guards against
+        // revisiting a directory (cycles / hardlinked dirs); files reachable via
+        // multiple parents share one inode (the MFT record number) by design.
+        let mut visited: HashSet<u64> = HashSet::new();
+        visited.insert(ROOT_INO);
+        let mut stack = vec![ROOT_INO];
+
+        while let Some(rec) = stack.pop() {
+            if nodes.len() >= MAX_NODES {
+                break;
+            }
+            let Ok(record) = fs.read_record(rec) else {
+                continue;
+            };
+            let Ok(entries) = fs.directory_entries(&record) else {
+                continue; // not a directory after all
+            };
+            let parent_path = nodes.get(&rec).map(|n| n.path.clone()).unwrap_or_default();
+
+            for entry in entries {
+                let Some(fnm) = entry.file_name else { continue };
+                // Drop DOS 8.3 short names so each file appears once.
+                if fnm.is_dos_namespace() {
+                    continue;
+                }
+                if fnm.name == "." || fnm.name == ".." {
+                    continue;
+                }
+                let child = entry.file_reference.record_number;
+                if child == rec {
+                    continue;
+                }
+
+                // Classify by reading the child's record: a directory carries an
+                // $INDEX_ROOT, so directory_entries succeeds.
+                let Ok(child_record) = fs.read_record(child) else {
+                    continue;
+                };
+                let is_dir = fs.directory_entries(&child_record).is_ok();
+
+                let name_bytes = fnm.name.clone().into_bytes();
+                let path = if parent_path.is_empty() {
+                    fnm.name.clone()
+                } else {
+                    format!("{parent_path}/{}", fnm.name)
+                };
+
+                nodes.entry(child).or_insert_with(|| NtfsNode {
+                    name: name_bytes.clone(),
+                    is_dir,
+                    size: fnm.real_size,
+                    atime: ts(fnm.accessed),
+                    mtime: ts(fnm.modified),
+                    ctime: ts(fnm.mft_modified),
+                    crtime: ts(fnm.created),
+                    path,
+                    children: vec![],
+                });
+
+                // Link under the parent once (a record can be index-listed twice).
+                let key = (rec, name_bytes);
+                if !index.contains_key(&key) {
+                    index.insert(key, child);
+                    if let Some(p) = nodes.get_mut(&rec) {
+                        p.children.push(child);
+                    }
+                }
+
+                if is_dir && visited.insert(child) {
+                    stack.push(child);
+                }
+            }
+        }
+
+        Ok(Self { fs, nodes, index })
     }
 
     fn node(&self, ino: u64) -> FsResult<&NtfsNode> {
