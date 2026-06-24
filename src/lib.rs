@@ -36,6 +36,9 @@ pub mod fs_hfsplus;
 #[cfg(feature = "exfat")]
 pub mod fs_exfat;
 
+#[cfg(feature = "apfs")]
+pub mod fs_apfs;
+
 pub mod fs_raw;
 
 pub use types::*;
