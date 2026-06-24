@@ -1,5 +1,6 @@
 #![forbid(unsafe_code)]
 
+pub mod archive_tree;
 pub mod detect;
 pub mod filter;
 pub mod fusefs;
