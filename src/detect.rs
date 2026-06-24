@@ -16,6 +16,7 @@ pub enum FsType {
     Zip,
     SevenZ,
     TarGz,
+    TarBz2,
     Unknown,
 }
 
@@ -33,6 +34,7 @@ impl std::fmt::Display for FsType {
             FsType::Zip => write!(f, "zip"),
             FsType::SevenZ => write!(f, "7z"),
             FsType::TarGz => write!(f, "tar.gz"),
+            FsType::TarBz2 => write!(f, "tar.bz2"),
             FsType::Unknown => write!(f, "unknown"),
         }
     }
@@ -52,6 +54,7 @@ impl std::str::FromStr for FsType {
             "zip" => Ok(FsType::Zip),
             "7z" | "sevenz" | "7zip" => Ok(FsType::SevenZ),
             "targz" | "tar.gz" | "tgz" | "gz" | "gzip" => Ok(FsType::TarGz),
+            "tarbz2" | "tar.bz2" | "tbz2" | "tbz" | "bz2" | "bzip2" => Ok(FsType::TarBz2),
             _ => Err(format!("unknown filesystem type: {s}")),
         }
     }
@@ -59,7 +62,8 @@ impl std::str::FromStr for FsType {
 
 /// Auto-detect filesystem type from a Read+Seek source.
 ///
-/// Checks magic numbers for ext4, NTFS, and exFAT. Returns `FsType::Unknown`
+/// Checks magic numbers for ext4, NTFS, exFAT, HFS+, APFS, ISO9660, the EWF and
+/// VMDK containers, and the zip/7z/gzip archive formats. Returns `FsType::Unknown`
 /// if no known signature matches. The seek position is reset to 0 after detection.
 pub fn detect_filesystem<R: Read + Seek>(source: &mut R) -> io::Result<FsType> {
     // Seek to start
@@ -95,6 +99,10 @@ pub fn detect_filesystem<R: Read + Seek>(source: &mut R) -> io::Result<FsType> {
     //   7z  : 37 7a bc af 27 1c
     if bytes_read >= 2 && buf[0] == 0x1F && buf[1] == 0x8B {
         return Ok(FsType::TarGz);
+    }
+    // bzip2: "BZh" (a .tar.bz2 / .tbz2; a bare .bz2 is decoded as a 1-file tar)
+    if bytes_read >= 3 && &buf[0..3] == b"BZh" {
+        return Ok(FsType::TarBz2);
     }
     if bytes_read >= 4
         && buf[0..2] == [0x50, 0x4B]
@@ -337,6 +345,18 @@ mod tests {
         assert_eq!(
             detect_filesystem(&mut Cursor::new(data)).unwrap(),
             FsType::TarGz
+        );
+    }
+
+    #[test]
+    fn detect_bzip2_as_tarbz2() {
+        // bzip2 magic "BZh" (0x42 0x5A 0x68) at byte 0.
+        let mut data = vec![0u8; 64];
+        data[0..3].copy_from_slice(b"BZh");
+        data[3] = b'9'; // block-size digit
+        assert_eq!(
+            detect_filesystem(&mut Cursor::new(data)).unwrap(),
+            FsType::TarBz2
         );
     }
 

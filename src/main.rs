@@ -5,7 +5,8 @@ use clap::Parser;
 #[derive(Parser)]
 #[command(
     name = "4n6mount",
-    about = "Universal forensic FUSE mount — auto-detects ext4, NTFS, exFAT",
+    about = "Universal forensic FUSE mount — auto-detects ext4, NTFS, exFAT, HFS+, \
+             ISO9660, EWF/VMDK containers, and zip/7z/tar.gz archives",
     version
 )]
 struct Cli {
@@ -119,22 +120,18 @@ fn main() {
 
     eprintln!("Detected filesystem: {fs_type}");
 
-    // Create ForensicFs based on detected type
+    // Compute a fallback name for raw (Unknown) mounts from the image basename.
+    let image_name = std::path::Path::new(&image).file_name().map_or_else(
+        || "evidence.bin".to_string(),
+        |n| n.to_string_lossy().to_string(),
+    );
+
+    // Create the ForensicFs. Container formats (EWF/VMDK) are opened here, then
+    // their inner filesystem is detected and built; every other type — disk
+    // filesystems and archives alike — is built directly from the image file.
+    // All construction funnels through `build_filesystem`, so a format is wired
+    // in exactly once.
     let forensic_fs: Box<dyn forensic_mount::ForensicFs + Send> = match fs_type {
-        #[cfg(feature = "ext4")]
-        forensic_mount::detect::FsType::Ext4 => Box::new(
-            forensic_mount::fs_ext4::Ext4ForensicFs::new(file).unwrap_or_else(|e| {
-                eprintln!("Cannot parse ext4: {e}");
-                std::process::exit(1);
-            }),
-        ),
-        #[cfg(feature = "iso")]
-        forensic_mount::detect::FsType::Iso => Box::new(
-            forensic_mount::fs_iso::IsoForensicFs::new(file).unwrap_or_else(|e| {
-                eprintln!("Cannot parse ISO 9660: {e}");
-                std::process::exit(1);
-            }),
-        ),
         #[cfg(feature = "vmdk")]
         forensic_mount::detect::FsType::Vmdk => {
             let mut vmdk_reader = vmdk::VmdkFileReader::open_path(std::path::Path::new(&image))
@@ -142,46 +139,13 @@ fn main() {
                     eprintln!("Cannot open VMDK image: {e}");
                     std::process::exit(1);
                 });
-
-            // Detect the filesystem inside the VMDK virtual disk (EWF-style).
-            let inner_fs_type = forensic_mount::detect::detect_filesystem(&mut vmdk_reader)
-                .unwrap_or_else(|e| {
-                    eprintln!("Cannot detect filesystem in VMDK: {e}");
-                    std::process::exit(1);
-                });
-
-            eprintln!("VMDK container detected, inner filesystem: {inner_fs_type}");
-
-            match inner_fs_type {
-                #[cfg(feature = "ext4")]
-                forensic_mount::detect::FsType::Ext4 => Box::new(
-                    forensic_mount::fs_ext4::Ext4ForensicFs::new(vmdk_reader).unwrap_or_else(|e| {
-                        eprintln!("Cannot parse ext4 in VMDK: {e}");
-                        std::process::exit(1);
-                    }),
-                ),
-                #[cfg(feature = "iso")]
-                forensic_mount::detect::FsType::Iso => Box::new(
-                    forensic_mount::fs_iso::IsoForensicFs::new(vmdk_reader).unwrap_or_else(|e| {
-                        eprintln!("Cannot parse ISO 9660 in VMDK: {e}");
-                        std::process::exit(1);
-                    }),
-                ),
-                _ => {
-                    eprintln!("No supported filesystem detected inside VMDK \u{2014} mounting as raw data");
-                    let filename = std::path::Path::new(&image).file_name().map_or_else(
-                        || "evidence.bin".to_string(),
-                        |n| n.to_string_lossy().to_string(),
-                    );
-                    Box::new(
-                        forensic_mount::fs_raw::RawForensicFs::new(vmdk_reader, filename)
-                            .unwrap_or_else(|e| {
-                                eprintln!("Cannot create raw FS: {e}");
-                                std::process::exit(1);
-                            }),
-                    )
-                }
-            }
+            let inner = forensic_mount::detect::detect_filesystem(&mut vmdk_reader)
+                .unwrap_or(forensic_mount::detect::FsType::Unknown);
+            eprintln!("VMDK container detected, inner filesystem: {inner}");
+            forensic_mount::build_filesystem(vmdk_reader, inner, &image_name).unwrap_or_else(|e| {
+                eprintln!("Cannot mount filesystem inside VMDK: {e}");
+                std::process::exit(1);
+            })
         }
         #[cfg(feature = "ewf")]
         forensic_mount::detect::FsType::Ewf => {
@@ -189,57 +153,18 @@ fn main() {
                 eprintln!("Cannot open EWF image: {e}");
                 std::process::exit(1);
             });
-
-            // Detect filesystem inside the EWF container
-            let inner_fs_type = forensic_mount::detect::detect_filesystem(&mut ewf_reader)
-                .unwrap_or_else(|e| {
-                    eprintln!("Cannot detect filesystem in EWF: {e}");
-                    std::process::exit(1);
-                });
-
-            eprintln!("EWF container detected, inner filesystem: {inner_fs_type}");
-
-            match inner_fs_type {
-                #[cfg(feature = "ext4")]
-                forensic_mount::detect::FsType::Ext4 => Box::new(
-                    forensic_mount::fs_ext4::Ext4ForensicFs::new(ewf_reader).unwrap_or_else(|e| {
-                        eprintln!("Cannot parse ext4 in EWF: {e}");
-                        std::process::exit(1);
-                    }),
-                ),
-                #[cfg(feature = "iso")]
-                forensic_mount::detect::FsType::Iso => Box::new(
-                    forensic_mount::fs_iso::IsoForensicFs::new(ewf_reader).unwrap_or_else(|e| {
-                        eprintln!("Cannot parse ISO 9660 in EWF: {e}");
-                        std::process::exit(1);
-                    }),
-                ),
-                forensic_mount::detect::FsType::Unknown => {
-                    eprintln!("No filesystem detected inside EWF — mounting as raw data");
-                    let filename = std::path::Path::new(&image).file_name().map_or_else(
-                        || "evidence.bin".to_string(),
-                        |n| n.to_string_lossy().to_string(),
-                    );
-                    Box::new(
-                        forensic_mount::fs_raw::RawForensicFs::new(ewf_reader, filename)
-                            .unwrap_or_else(|e| {
-                                eprintln!("Cannot create raw FS: {e}");
-                                std::process::exit(1);
-                            }),
-                    )
-                }
-                other => {
-                    eprintln!("Filesystem '{other}' inside EWF is not supported");
-                    std::process::exit(1);
-                }
-            }
+            let inner = forensic_mount::detect::detect_filesystem(&mut ewf_reader)
+                .unwrap_or(forensic_mount::detect::FsType::Unknown);
+            eprintln!("EWF container detected, inner filesystem: {inner}");
+            forensic_mount::build_filesystem(ewf_reader, inner, &image_name).unwrap_or_else(|e| {
+                eprintln!("Cannot mount filesystem inside EWF: {e}");
+                std::process::exit(1);
+            })
         }
-        _ => {
-            eprintln!(
-                "Filesystem type '{fs_type}' is not supported (compiled features may be missing)"
-            );
+        other => forensic_mount::build_filesystem(file, other, &image_name).unwrap_or_else(|e| {
+            eprintln!("{e}");
             std::process::exit(1);
-        }
+        }),
     };
 
     // Build session if requested

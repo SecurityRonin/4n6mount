@@ -139,7 +139,7 @@ mod tests {
     use super::*;
     use std::io::Cursor;
 
-    /// The committed 512 KiB HFS+ volume minted on macOS (newfs_hfs via
+    /// The committed 512 KiB HFS+ volume minted on macOS (`newfs_hfs` via
     /// hdiutil); TSK `fls`/`icat` ground truth: `hello.txt` (cnid 18) and a
     /// `sub/` directory holding `deep.txt`.
     const IMG: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/data/hfsplus.img");

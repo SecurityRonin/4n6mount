@@ -21,7 +21,8 @@ Forensic examiners spend too much time on tooling friction:
 # Mount an ext4 image
 4n6mount image.dd /mnt/evidence
 
-# Auto-detects filesystem type (ext4, NTFS, exFAT)
+# Auto-detects the format (ext4 / NTFS / exFAT / HFS+ / ISO9660,
+# EWF/VMDK containers, and zip / 7z / tar.gz archives)
 # Creates virtual directories:
 ls /mnt/evidence/
 #   ro/          - read-only pristine evidence
@@ -104,17 +105,42 @@ Image hash (SHA-256) is verified on resume — detects evidence tampering.
 4n6mount image.dd /mnt/evidence
 ```
 
-## Filesystem support
+## Format support
 
-| Filesystem | Status | Feature flag |
-|-----------|--------|-------------|
-| **ext4** | Supported | `--features ext4` (default) |
-| NTFS | Planned | `--features ntfs` |
-| exFAT | Planned | `--features exfat` |
-| HFS+ | Planned | `--features hfsplus` |
-| APFS | Planned | `--features apfs` |
+Auto-detection is by magic number; override with `--fs <type>`. Every format is
+validated against real-world data with an independent oracle (The Sleuth Kit, or
+the OS's own driver) — never a self-encoded round-trip.
 
-Auto-detection via magic numbers. Override with `--fs ext4`.
+### Filesystems
+
+| Filesystem | Status | Feature flag | Validated against |
+|-----------|--------|-------------|-------------------|
+| **ext4** | Supported | `ext4` (default) | real ext4 image |
+| **NTFS** | Supported | `ntfs` (default) | real NTFS volume, TSK `fls`/`icat` |
+| **exFAT** | Supported | `exfat` (default) | macOS-minted volume, TSK oracle |
+| **HFS+ / HFSX** | Supported | `hfsplus` (default) | macOS-minted volume, TSK oracle |
+| **ISO 9660 / UDF** | Supported | `iso` (default) | Rock Ridge ISO |
+| APFS | Detected, not yet mountable | — | blocked on upstream `apfs-core` parser |
+
+APFS is recognized (NXSB superblock) but its parser is still a work in progress
+upstream; 4n6mount reports a clear unsupported error rather than mounting it
+incorrectly.
+
+### Archives
+
+Archives mount as a browsable read-only tree (their entries become files).
+
+| Archive | Status | Feature flag | Validated against |
+|---------|--------|-------------|-------------------|
+| **zip** | Supported | `zip` (default) | real `zip`-tool output |
+| **7-Zip (.7z)** | Supported | `sevenz` (default) | real `7z`-tool output |
+| **tar.gz / .tgz** | Supported | `targz` (default) | real `tar`-tool output |
+
+### Containers
+
+`EWF` (`.E01`) and `VMDK` images are opened transparently and their **inner**
+filesystem (ext4 / NTFS / exFAT / HFS+ / ISO) is detected and mounted; an
+unrecognized inner volume falls back to a single raw file.
 
 ## Platform support
 

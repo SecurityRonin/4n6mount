@@ -28,6 +28,23 @@ self-licensed fixtures are committed with their md5 below.
 |---|---|---|
 | `hfsplus.img` | 524288 | `bf744eb64ff2c4ce0948d78474298d3a` |
 
+### `exfat.img`
+
+- **Source / Identity:** a 1 MiB exFAT volume minted locally on macOS with
+  OS-native tooling — `hdiutil create -size 1m -fs ExFAT -volname EXFTEST
+  -layout NONE`, populated by the macOS exFAT driver, flattened to a raw image
+  with `hdiutil convert -format UDTO`.
+- **Authoring engine = independent oracle:** bytes written by Apple's exFAT
+  implementation, cross-checked with TSK `fls`/`icat`.
+- **Contents (TSK `fls`):** `hello.txt` (`"hello from exfat\n"`) and `sub/`
+  holding `deep.txt` (`"deep exfat content\n"`).
+- **Used by:** `src/fs_exfat.rs` unit tests.
+- **License:** CC0 / public-domain — synthetic, authored here.
+
+| File | Bytes | MD5 |
+|---|---|---|
+| `exfat.img` | 1048576 | `7265865c090f13d699532e0f70ee3610` |
+
 ## Referenced (not committed) corpora
 
 - **NTFS:** `SampleTinyNtfsVolume/partition.dd` (real NTFS volume from

@@ -203,7 +203,7 @@ fn sanitize_path(path: &str) -> Option<Vec<Vec<u8>>> {
     let mut out = Vec::new();
     for comp in path.split('/') {
         match comp {
-            "" | "." => continue,
+            "" | "." => {}
             ".." => return None,
             c => out.push(c.as_bytes().to_vec()),
         }

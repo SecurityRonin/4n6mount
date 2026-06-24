@@ -18,7 +18,7 @@ pub mod fs_ext4;
 #[cfg(feature = "iso")]
 pub mod fs_iso;
 
-#[cfg(feature = "targz")]
+#[cfg(feature = "tarball")]
 pub mod fs_tar;
 
 #[cfg(feature = "zip")]
@@ -32,6 +32,9 @@ pub mod fs_ntfs;
 
 #[cfg(feature = "hfsplus")]
 pub mod fs_hfsplus;
+
+#[cfg(feature = "exfat")]
+pub mod fs_exfat;
 
 pub mod fs_raw;
 
@@ -131,6 +134,73 @@ pub trait ForensicFs {
     }
 }
 
+/// Construct a [`ForensicFs`] from a seekable byte source and a detected type.
+///
+/// This is the single dispatch point shared by the CLI's outer mount path and
+/// its container (EWF/VMDK) inner-filesystem path, so a new format is wired in
+/// exactly once. `name` is used only to label the single file of a raw
+/// (`FsType::Unknown`) mount.
+///
+/// Archives (`zip`/`7z`/`tar.gz`) and filesystems (`ext4`/`ntfs`/`exfat`/
+/// `hfsplus`/`iso`) all build from the same `Read + Seek` reader. `FsType::Apfs`
+/// is detected but returns an explicit unsupported error (the `apfs-core`
+/// parser is an unimplemented skeleton). Container types (`Ewf`/`Vmdk`) are
+/// opened by the caller, not here.
+///
+/// # Errors
+///
+/// Returns the parse error (as `InvalidData`) if the source does not match the
+/// claimed type, or `Unsupported` for APFS / a feature that was not compiled in.
+pub fn build_filesystem<R: io::Read + io::Seek + Send + 'static>(
+    reader: R,
+    fs_type: detect::FsType,
+    name: &str,
+) -> io::Result<Box<dyn ForensicFs + Send>> {
+    use detect::FsType;
+    let bad = |e: FsError| io::Error::new(io::ErrorKind::InvalidData, e.to_string());
+    match fs_type {
+        #[cfg(feature = "ext4")]
+        FsType::Ext4 => Ok(Box::new(fs_ext4::Ext4ForensicFs::new(reader).map_err(bad)?)),
+        #[cfg(feature = "iso")]
+        FsType::Iso => Ok(Box::new(fs_iso::IsoForensicFs::new(reader).map_err(bad)?)),
+        #[cfg(feature = "ntfs")]
+        FsType::Ntfs => Ok(Box::new(fs_ntfs::NtfsForensicFs::new(reader).map_err(bad)?)),
+        #[cfg(feature = "hfsplus")]
+        FsType::Hfsplus => Ok(Box::new(
+            fs_hfsplus::HfsPlusForensicFs::new(reader).map_err(bad)?,
+        )),
+        #[cfg(feature = "exfat")]
+        FsType::ExFat => Ok(Box::new(
+            fs_exfat::ExFatForensicFs::new(reader).map_err(bad)?,
+        )),
+        #[cfg(feature = "tarball")]
+        FsType::TarGz => Ok(Box::new(fs_tar::TarballForensicFs::from_gz(reader).map_err(bad)?)),
+        #[cfg(feature = "tarball")]
+        FsType::TarBz2 => Ok(Box::new(fs_tar::TarballForensicFs::from_bz2(reader).map_err(bad)?)),
+        #[cfg(feature = "zip")]
+        FsType::Zip => Ok(Box::new(fs_zip::ZipForensicFs::new(reader).map_err(bad)?)),
+        #[cfg(feature = "sevenz")]
+        FsType::SevenZ => Ok(Box::new(
+            fs_sevenz::SevenZForensicFs::new(reader).map_err(bad)?,
+        )),
+        FsType::Unknown => Ok(Box::new(
+            fs_raw::RawForensicFs::new(reader, name.to_string()).map_err(bad)?,
+        )),
+        FsType::Apfs => Err(io::Error::new(
+            io::ErrorKind::Unsupported,
+            "APFS detected but not yet supported: the apfs-core parser is an \
+             unimplemented skeleton (container/catalog parsing is a work in progress)",
+        )),
+        other => Err(io::Error::new(
+            io::ErrorKind::Unsupported,
+            format!(
+                "filesystem '{other}' cannot be built here \
+                 (a container type, or its feature was not compiled in)"
+            ),
+        )),
+    }
+}
+
 /// Mount a forensic filesystem via FUSE (or `WinFSP` on Windows).
 ///
 /// This is the main entry point for consumers.  Pass a `ForensicFs`
@@ -161,5 +231,55 @@ pub fn mount(
             io::ErrorKind::Unsupported,
             "no FUSE support on this platform",
         ))
+    }
+}
+
+#[cfg(test)]
+mod dispatch_tests {
+    use super::*;
+    use std::io::Cursor;
+
+    #[test]
+    fn apfs_is_unsupported_not_silent() {
+        // APFS must fail loud, never silently mount empty.
+        match build_filesystem(Cursor::new(vec![0u8; 64]), detect::FsType::Apfs, "x") {
+            Err(e) => assert_eq!(e.kind(), io::ErrorKind::Unsupported),
+            Ok(_) => panic!("APFS must error, not mount"),
+        }
+    }
+
+    #[test]
+    fn unknown_builds_raw() {
+        let fs = build_filesystem(
+            Cursor::new(b"hello".to_vec()),
+            detect::FsType::Unknown,
+            "evidence.bin",
+        )
+        .unwrap();
+        assert_eq!(fs.fs_info().unwrap()["filesystem"], "raw");
+    }
+
+    #[cfg(feature = "hfsplus")]
+    #[test]
+    fn hfsplus_dispatches_to_module() {
+        let img = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/data/hfsplus.img");
+        let Ok(data) = std::fs::read(img) else {
+            eprintln!("skip: hfsplus.img unavailable");
+            return;
+        };
+        let fs = build_filesystem(Cursor::new(data), detect::FsType::Hfsplus, "x").unwrap();
+        assert_eq!(fs.fs_info().unwrap()["type"], "hfsplus");
+    }
+
+    #[cfg(feature = "exfat")]
+    #[test]
+    fn exfat_dispatches_to_module() {
+        let img = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/data/exfat.img");
+        let Ok(data) = std::fs::read(img) else {
+            eprintln!("skip: exfat.img unavailable");
+            return;
+        };
+        let fs = build_filesystem(Cursor::new(data), detect::FsType::ExFat, "x").unwrap();
+        assert_eq!(fs.fs_info().unwrap()["type"], "exfat");
     }
 }

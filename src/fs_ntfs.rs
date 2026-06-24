@@ -148,9 +148,10 @@ impl<R: Read + Seek> NtfsForensicFs<R> {
                 });
 
                 // Link under the parent once (a record can be index-listed twice).
-                let key = (rec, name_bytes);
-                if !index.contains_key(&key) {
-                    index.insert(key, child);
+                if let std::collections::hash_map::Entry::Vacant(slot) =
+                    index.entry((rec, name_bytes))
+                {
+                    slot.insert(child);
                     if let Some(p) = nodes.get_mut(&rec) {
                         p.children.push(child);
                     }
