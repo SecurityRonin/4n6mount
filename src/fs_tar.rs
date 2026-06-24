@@ -30,9 +30,52 @@ impl TarGzForensicFs {
     /// # Errors
     ///
     /// [`FsError::Corrupt`] if the gzip or tar stream is malformed.
-    pub fn new<R: Read + Seek>(source: R) -> Result<Self, FsError> {
-        let _ = (source, SeekFrom::Start(0), FsTimestamp::default());
-        todo!("TarGzForensicFs::new")
+    pub fn new<R: Read + Seek>(mut source: R) -> Result<Self, FsError> {
+        source.seek(SeekFrom::Start(0)).map_err(FsError::Io)?;
+        let gz = flate2::read::GzDecoder::new(source);
+        let mut archive = tar::Archive::new(gz);
+        let mut tree = ArchiveTree::new();
+        let mut data: Vec<Vec<u8>> = Vec::new();
+        let mut skipped = 0usize;
+
+        let entries = archive
+            .entries()
+            .map_err(|e| FsError::Corrupt(format!("tar: {e}")))?;
+        for entry in entries {
+            let mut entry = entry.map_err(|e| FsError::Corrupt(format!("tar entry: {e}")))?;
+            let etype = entry.header().entry_type();
+            let mtime = FsTimestamp {
+                seconds: entry.header().mtime().unwrap_or(0) as i64,
+                nanoseconds: 0,
+            };
+            let path = entry
+                .path()
+                .map_err(|e| FsError::Corrupt(format!("tar path: {e}")))?
+                .to_string_lossy()
+                .into_owned();
+
+            if etype.is_dir() {
+                tree.insert(&path, true, 0, mtime, None);
+            } else if etype.is_file() {
+                let mut buf = Vec::new();
+                entry.read_to_end(&mut buf).map_err(FsError::Io)?;
+                let id = data.len();
+                if tree
+                    .insert(&path, false, buf.len() as u64, mtime, Some(id))
+                    .is_some()
+                {
+                    data.push(buf);
+                }
+            } else {
+                skipped += 1;
+            }
+        }
+
+        Ok(Self {
+            tree,
+            data,
+            skipped,
+        })
     }
 }
 
