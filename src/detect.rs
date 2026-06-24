@@ -8,9 +8,14 @@ pub enum FsType {
     Ext4,
     Ntfs,
     ExFat,
+    Hfsplus,
+    Apfs,
     Ewf,
     Iso,
     Vmdk,
+    Zip,
+    SevenZ,
+    TarGz,
     Unknown,
 }
 
@@ -20,9 +25,14 @@ impl std::fmt::Display for FsType {
             FsType::Ext4 => write!(f, "ext4"),
             FsType::Ntfs => write!(f, "ntfs"),
             FsType::ExFat => write!(f, "exfat"),
+            FsType::Hfsplus => write!(f, "hfsplus"),
+            FsType::Apfs => write!(f, "apfs"),
             FsType::Ewf => write!(f, "ewf"),
             FsType::Iso => write!(f, "iso9660"),
             FsType::Vmdk => write!(f, "vmdk"),
+            FsType::Zip => write!(f, "zip"),
+            FsType::SevenZ => write!(f, "7z"),
+            FsType::TarGz => write!(f, "tar.gz"),
             FsType::Unknown => write!(f, "unknown"),
         }
     }
@@ -35,8 +45,13 @@ impl std::str::FromStr for FsType {
             "ext4" => Ok(FsType::Ext4),
             "ntfs" => Ok(FsType::Ntfs),
             "exfat" => Ok(FsType::ExFat),
+            "hfsplus" | "hfs+" | "hfsx" => Ok(FsType::Hfsplus),
+            "apfs" => Ok(FsType::Apfs),
             "ewf" | "e01" => Ok(FsType::Ewf),
             "iso" | "iso9660" | "cd" | "udf" => Ok(FsType::Iso),
+            "zip" => Ok(FsType::Zip),
+            "7z" | "sevenz" | "7zip" => Ok(FsType::SevenZ),
+            "targz" | "tar.gz" | "tgz" | "gz" | "gzip" => Ok(FsType::TarGz),
             _ => Err(format!("unknown filesystem type: {s}")),
         }
     }
@@ -280,5 +295,96 @@ mod tests {
         assert_eq!(detect_filesystem(&mut cursor).unwrap(), FsType::Ext4);
         // Seek position should be reset to 0 after detection
         assert_eq!(cursor.stream_position().unwrap(), 0);
+    }
+
+    #[test]
+    fn detect_gzip_as_targz() {
+        // gzip magic 1f 8b at byte 0.
+        let mut data = vec![0u8; 64];
+        data[0] = 0x1F;
+        data[1] = 0x8B;
+        data[2] = 0x08; // deflate
+        assert_eq!(
+            detect_filesystem(&mut Cursor::new(data)).unwrap(),
+            FsType::TarGz
+        );
+    }
+
+    #[test]
+    fn detect_zip_local_file_header() {
+        let mut data = vec![0u8; 64];
+        data[0..4].copy_from_slice(b"PK\x03\x04");
+        assert_eq!(
+            detect_filesystem(&mut Cursor::new(data)).unwrap(),
+            FsType::Zip
+        );
+    }
+
+    #[test]
+    fn detect_zip_empty_archive() {
+        // An empty zip is just the end-of-central-directory record: PK\x05\x06.
+        let mut data = vec![0u8; 64];
+        data[0..4].copy_from_slice(b"PK\x05\x06");
+        assert_eq!(
+            detect_filesystem(&mut Cursor::new(data)).unwrap(),
+            FsType::Zip
+        );
+    }
+
+    #[test]
+    fn detect_7z_signature() {
+        let mut data = vec![0u8; 64];
+        data[0..6].copy_from_slice(&[0x37, 0x7A, 0xBC, 0xAF, 0x27, 0x1C]);
+        assert_eq!(
+            detect_filesystem(&mut Cursor::new(data)).unwrap(),
+            FsType::SevenZ
+        );
+    }
+
+    #[test]
+    fn detect_hfsplus_signature() {
+        // HFS+ volume header at byte 1024; signature "H+" (0x482B).
+        let mut data = vec![0u8; 2048];
+        data[1024] = 0x48; // 'H'
+        data[1025] = 0x2B; // '+'
+        assert_eq!(
+            detect_filesystem(&mut Cursor::new(data)).unwrap(),
+            FsType::Hfsplus
+        );
+    }
+
+    #[test]
+    fn detect_hfsx_signature() {
+        // HFSX (case-sensitive) uses "HX" (0x4858) at the same offset.
+        let mut data = vec![0u8; 2048];
+        data[1024] = 0x48; // 'H'
+        data[1025] = 0x58; // 'X'
+        assert_eq!(
+            detect_filesystem(&mut Cursor::new(data)).unwrap(),
+            FsType::Hfsplus
+        );
+    }
+
+    #[test]
+    fn detect_apfs_nxsb() {
+        // APFS container superblock: 32-byte obj header, then magic "NXSB".
+        let mut data = vec![0u8; 4096];
+        data[32..36].copy_from_slice(b"NXSB");
+        assert_eq!(
+            detect_filesystem(&mut Cursor::new(data)).unwrap(),
+            FsType::Apfs
+        );
+    }
+
+    #[test]
+    fn new_fstypes_parse_and_display() {
+        assert_eq!("hfsplus".parse::<FsType>().unwrap(), FsType::Hfsplus);
+        assert_eq!("apfs".parse::<FsType>().unwrap(), FsType::Apfs);
+        assert_eq!("zip".parse::<FsType>().unwrap(), FsType::Zip);
+        assert_eq!("7z".parse::<FsType>().unwrap(), FsType::SevenZ);
+        assert_eq!("tar.gz".parse::<FsType>().unwrap(), FsType::TarGz);
+        assert_eq!(FsType::Hfsplus.to_string(), "hfsplus");
+        assert_eq!(FsType::SevenZ.to_string(), "7z");
+        assert_eq!(FsType::TarGz.to_string(), "tar.gz");
     }
 }
