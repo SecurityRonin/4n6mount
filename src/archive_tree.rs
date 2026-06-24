@@ -47,12 +47,23 @@ impl Default for ArchiveTree {
 impl ArchiveTree {
     /// Create an empty tree containing only the root directory.
     pub fn new() -> Self {
-        let _ = (
+        let mut nodes = HashMap::new();
+        nodes.insert(
             ROOT_INO,
-            FsFileType::Directory,
-            FsError::NotFound(String::new()),
+            Node {
+                name: b"/".to_vec(),
+                is_dir: true,
+                size: 0,
+                mtime: FsTimestamp::default(),
+                payload_id: None,
+                children: vec![],
+            },
         );
-        todo!("ArchiveTree::new")
+        Self {
+            nodes,
+            index: HashMap::new(),
+            next_ino: ROOT_INO + 1,
+        }
     }
 
     /// Insert a file (or explicit directory) at `path`, creating any missing
@@ -67,8 +78,40 @@ impl ArchiveTree {
         mtime: FsTimestamp,
         payload_id: Option<usize>,
     ) -> Option<u64> {
-        let _ = (path, is_dir, size, mtime, payload_id);
-        todo!("ArchiveTree::insert")
+        let components = sanitize_path(path)?;
+        if components.is_empty() {
+            return None;
+        }
+        let last = components.len() - 1;
+        let mut parent = ROOT_INO;
+        for (i, comp) in components.iter().enumerate() {
+            let leaf = i == last;
+            let key = (parent, comp.clone());
+            if let Some(&existing) = self.index.get(&key) {
+                // A path may re-list an intermediate directory; reuse it. A leaf
+                // colliding with an existing node keeps the first (archives can
+                // carry duplicate names; the tree shows one).
+                parent = existing;
+                continue;
+            }
+            let ino = self.next_ino;
+            self.next_ino += 1;
+            let node = Node {
+                name: comp.clone(),
+                is_dir: if leaf { is_dir } else { true },
+                size: if leaf && !is_dir { size } else { 0 },
+                mtime: if leaf { mtime } else { FsTimestamp::default() },
+                payload_id: if leaf && !is_dir { payload_id } else { None },
+                children: vec![],
+            };
+            self.nodes.insert(ino, node);
+            self.index.insert(key, ino);
+            if let Some(p) = self.nodes.get_mut(&parent) {
+                p.children.push(ino);
+            }
+            parent = ino;
+        }
+        Some(parent)
     }
 
     /// The root inode.
@@ -78,26 +121,65 @@ impl ArchiveTree {
 
     /// The backend payload handle for a leaf file, if any.
     pub fn payload_id(&self, ino: u64) -> Option<usize> {
-        let _ = ino;
-        todo!("ArchiveTree::payload_id")
+        self.nodes.get(&ino).and_then(|n| n.payload_id)
     }
 
     /// List a directory's children.
     pub fn read_dir(&self, ino: u64) -> FsResult<Vec<FsDirEntry>> {
-        let _ = ino;
-        todo!("ArchiveTree::read_dir")
+        let node = self.node(ino)?;
+        let mut out = Vec::with_capacity(node.children.len());
+        for &child in &node.children {
+            if let Some(c) = self.nodes.get(&child) {
+                out.push(FsDirEntry {
+                    inode: child,
+                    name: c.name.clone(),
+                    file_type: if c.is_dir {
+                        FsFileType::Directory
+                    } else {
+                        FsFileType::RegularFile
+                    },
+                });
+            }
+        }
+        Ok(out)
     }
 
     /// Look up a child by name within a directory.
     pub fn lookup(&self, parent_ino: u64, name: &[u8]) -> FsResult<Option<u64>> {
-        let _ = (parent_ino, name);
-        todo!("ArchiveTree::lookup")
+        // Validate the parent exists so a lookup on a bogus inode errors rather
+        // than silently returning "not found".
+        self.node(parent_ino)?;
+        Ok(self.index.get(&(parent_ino, name.to_vec())).copied())
     }
 
     /// Metadata for an inode.
     pub fn metadata(&self, ino: u64) -> FsResult<FsMetadata> {
-        let _ = ino;
-        todo!("ArchiveTree::metadata")
+        let node = self.node(ino)?;
+        let (file_type, mode) = if node.is_dir {
+            (FsFileType::Directory, 0o40555)
+        } else {
+            (FsFileType::RegularFile, 0o100_444)
+        };
+        Ok(FsMetadata {
+            ino,
+            file_type,
+            mode,
+            uid: 0,
+            gid: 0,
+            size: node.size,
+            links_count: 1,
+            atime: node.mtime,
+            mtime: node.mtime,
+            ctime: node.mtime,
+            crtime: node.mtime,
+            allocated: true,
+        })
+    }
+
+    fn node(&self, ino: u64) -> FsResult<&Node> {
+        self.nodes
+            .get(&ino)
+            .ok_or_else(|| FsError::NotFound(format!("inode {ino}")))
     }
 
     /// Number of nodes (including the root), for diagnostics.
@@ -109,6 +191,27 @@ impl ArchiveTree {
     pub fn is_empty(&self) -> bool {
         self.nodes.len() <= 1
     }
+}
+
+/// Split an archive entry path into safe components, or `None` if the path is
+/// absolute, empty, or escapes its root via a `..` component (zip-slip / tar
+/// traversal). `.` and empty components are dropped; a trailing slash collapses.
+fn sanitize_path(path: &str) -> Option<Vec<Vec<u8>>> {
+    if path.starts_with('/') {
+        return None;
+    }
+    let mut out = Vec::new();
+    for comp in path.split('/') {
+        match comp {
+            "" | "." => continue,
+            ".." => return None,
+            c => out.push(c.as_bytes().to_vec()),
+        }
+    }
+    if out.is_empty() {
+        return None;
+    }
+    Some(out)
 }
 
 #[cfg(test)]
