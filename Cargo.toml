@@ -11,11 +11,12 @@ name = "4n6mount"
 path = "src/main.rs"
 
 [features]
-default = ["ext4", "ewf", "iso", "vmdk", "targz", "zip", "sevenz"]
+default = ["ext4", "ewf", "iso", "vmdk", "targz", "zip", "sevenz", "ntfs"]
 ext4 = ["dep:ext4fs"]
 ewf = ["dep:ewf"]
 iso = ["dep:iso9660-forensic"]
 vmdk = ["dep:vmdk"]
+ntfs = ["dep:ntfs-core"]
 targz = ["dep:tar", "dep:flate2"]
 zip = ["dep:zip"]
 sevenz = ["dep:sevenz-rust"]
@@ -26,6 +27,7 @@ ext4fs = { package = "ext4fs-core", version = "0.1.0", path = "../ext4fs-forensi
 ewf = { version = "0.2.1", path = "../ewf/ewf", optional = true }
 vmdk = { package = "vmdk-core", version = "0.7.0", path = "../vmdk-forensic/core", optional = true }
 iso9660-forensic = { version = "0.6.0", path = "../iso9660-forensic/iso", optional = true }
+ntfs-core = { version = "0.8.1", path = "../ntfs-forensic/core", optional = true }
 fuser = "0.15"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
