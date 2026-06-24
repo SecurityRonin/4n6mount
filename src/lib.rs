@@ -18,6 +18,9 @@ pub mod fs_ext4;
 #[cfg(feature = "iso")]
 pub mod fs_iso;
 
+#[cfg(feature = "targz")]
+pub mod fs_tar;
+
 pub mod fs_raw;
 
 pub use types::*;
