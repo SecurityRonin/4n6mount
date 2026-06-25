@@ -158,6 +158,19 @@ impl<P: PhysicalMemoryProvider> MemoryFs<P> {
             Err(why) => format!("# modules unavailable: {why}\n"),
         }
     }
+
+    /// Render `sys/network.txt`: the OS-appropriate connection walker, or a
+    /// one-line diagnostic on a walker miss/error (fail-soft).
+    fn render_network(&self) -> String {
+        // RED stub — implemented in the GREEN step.
+        String::new()
+    }
+
+    /// Render `sys/dmesg.txt` (Linux kernel ring buffer), or a diagnostic.
+    fn render_dmesg_file(&self) -> String {
+        // RED stub — implemented in the GREEN step.
+        String::new()
+    }
 }
 
 impl From<memf_windows::WinDriverInfo> for ModRow {
@@ -251,6 +264,31 @@ pub(crate) fn render_module_table(rows: &[ModRow]) -> String {
     out
 }
 
+/// One network-connection row, normalized across OSes.
+#[derive(Debug, Clone)]
+pub(crate) struct NetRow {
+    pub protocol: String,
+    pub local: String,
+    pub remote: String,
+    pub state: String,
+    /// Owning PID, or empty when not determinable.
+    pub pid: String,
+}
+
+/// Render a connection list as a tab-separated table with a column header.
+pub(crate) fn render_net_table(rows: &[NetRow]) -> String {
+    // RED stub — implemented in the GREEN step.
+    let _ = rows;
+    String::new()
+}
+
+/// Render the kernel ring buffer as `[timestamp] message` lines.
+pub(crate) fn render_dmesg(entries: &[(u64, String)]) -> String {
+    // RED stub — implemented in the GREEN step.
+    let _ = entries;
+    String::new()
+}
+
 impl<P: PhysicalMemoryProvider> ForensicFs for MemoryFs<P> {
     fn root_ino(&self) -> u64 {
         ROOT_INO
@@ -303,6 +341,13 @@ impl<P: PhysicalMemoryProvider> ForensicFs for MemoryFs<P> {
             Artifact::SysModules => {
                 Ok(Self::file_metadata(ino, self.render_modules().len() as u64))
             }
+            Artifact::SysNetwork => {
+                Ok(Self::file_metadata(ino, self.render_network().len() as u64))
+            }
+            Artifact::SysDmesg => Ok(Self::file_metadata(
+                ino,
+                self.render_dmesg_file().len() as u64,
+            )),
         }
     }
 
@@ -317,6 +362,8 @@ impl<P: PhysicalMemoryProvider> ForensicFs for MemoryFs<P> {
             Artifact::SysOsInfo => Ok(self.render_os_info().into_bytes()),
             Artifact::SysProcesses => Ok(self.render_processes().into_bytes()),
             Artifact::SysModules => Ok(self.render_modules().into_bytes()),
+            Artifact::SysNetwork => Ok(self.render_network().into_bytes()),
+            Artifact::SysDmesg => Ok(self.render_dmesg_file().into_bytes()),
             Artifact::Dir => Err(not_supported("read_file on a directory")),
         }
     }
@@ -562,5 +609,76 @@ mod tests {
             text.contains("modules"),
             "expected a modules diagnostic: {text}"
         );
+    }
+
+    // -- sys/network.txt (Task 2.3) --
+
+    #[test]
+    fn render_net_table_has_header_and_rows() {
+        let rows = vec![NetRow {
+            protocol: "TCPv4".into(),
+            local: "10.0.0.5:445".into(),
+            remote: "10.0.0.9:51000".into(),
+            state: "ESTABLISHED".into(),
+            pid: "4".into(),
+        }];
+        let out = render_net_table(&rows);
+        let header = out.lines().next().unwrap_or_default();
+        assert!(
+            header.contains("PROTO") && header.contains("LOCAL") && header.contains("STATE"),
+            "header: {header:?}"
+        );
+        assert!(
+            out.contains("445") && out.contains("ESTABLISHED"),
+            "got: {out}"
+        );
+    }
+
+    #[test]
+    fn render_net_table_empty_is_just_header() {
+        assert_eq!(render_net_table(&[]).lines().count(), 1);
+    }
+
+    #[test]
+    fn network_txt_fail_soft_diagnostic_not_empty() {
+        let mut fs = mem_fs();
+        let sys = fs.lookup(ROOT_INO, b"sys").unwrap().unwrap();
+        let n = fs
+            .lookup(sys, b"network.txt")
+            .unwrap()
+            .expect("network.txt");
+        assert_eq!(fs.metadata(n).unwrap().file_type, FsFileType::RegularFile);
+        let text = String::from_utf8(fs.read_file(n).unwrap()).unwrap();
+        assert!(!text.is_empty() && text.contains("network"), "got: {text}");
+    }
+
+    // -- sys/dmesg.txt (Task 2.5) --
+
+    #[test]
+    fn render_dmesg_formats_timestamp_and_message() {
+        let entries = vec![
+            (0u64, "Linux version 6.1.0".to_string()),
+            (1_500_000_000u64, "eth0: link up".to_string()),
+        ];
+        let out = render_dmesg(&entries);
+        assert!(out.contains("Linux version 6.1.0"), "got: {out}");
+        assert!(out.contains("eth0: link up"), "got: {out}");
+        assert_eq!(out.lines().count(), 2);
+    }
+
+    #[test]
+    fn render_dmesg_empty_is_empty() {
+        assert!(render_dmesg(&[]).is_empty());
+    }
+
+    #[test]
+    fn dmesg_txt_fail_soft_diagnostic_not_empty() {
+        // ctx.os is Windows in mem_fs(); dmesg is Linux-only → honest diagnostic.
+        let mut fs = mem_fs();
+        let sys = fs.lookup(ROOT_INO, b"sys").unwrap().unwrap();
+        let d = fs.lookup(sys, b"dmesg.txt").unwrap().expect("dmesg.txt");
+        assert_eq!(fs.metadata(d).unwrap().file_type, FsFileType::RegularFile);
+        let text = String::from_utf8(fs.read_file(d).unwrap()).unwrap();
+        assert!(!text.is_empty() && text.contains("dmesg"), "got: {text}");
     }
 }

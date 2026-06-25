@@ -24,6 +24,10 @@ pub enum Artifact {
     SysProcesses,
     /// `sys/modules.txt` — kernel modules/drivers, from the memf module walker.
     SysModules,
+    /// `sys/network.txt` — network connections, from the memf network walker.
+    SysNetwork,
+    /// `sys/dmesg.txt` — Linux kernel ring buffer, from the memf dmesg extractor.
+    SysDmesg,
 }
 
 /// One node in the synthetic tree.
@@ -77,6 +81,8 @@ impl Registry {
         registry.add_file(3, 7, "os-info.txt", Artifact::SysOsInfo);
         registry.add_file(3, 8, "processes.txt", Artifact::SysProcesses);
         registry.add_file(3, 9, "modules.txt", Artifact::SysModules);
+        registry.add_file(3, 10, "network.txt", Artifact::SysNetwork);
+        registry.add_file(3, 11, "dmesg.txt", Artifact::SysDmesg);
         registry
     }
 
