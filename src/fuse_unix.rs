@@ -19,7 +19,7 @@ pub fn mount_unix(
     session: Option<Session>,
     options: &MountOptions,
 ) -> io::Result<()> {
-    let fuse_fs = ForensicFuseFs::new(fs, session);
+    let fuse_fs = ForensicFuseFs::new(fs, session, options.layout);
 
     let mut fuse_options = vec![fuser::MountOption::FSName(options.fs_name.clone())];
     if options.read_only {
