@@ -189,8 +189,30 @@ impl std::fmt::Display for MemDumpFormat {
 /// position is reset to 0. Magics mirror `memf-format`'s plugins (LiME
 /// `0x4C694D45`, AVML `0x4C4D5641`, ELF `ET_CORE`, crash `PAGE`+`DU64`).
 pub fn detect_memory_dump<R: Read + Seek>(source: &mut R) -> io::Result<Option<MemDumpFormat>> {
-    let _ = MemDumpFormat::Lime;
     source.seek(SeekFrom::Start(0))?;
+    let mut buf = [0u8; 18];
+    let n = read_fill(source, &mut buf);
+    source.seek(SeekFrom::Start(0))?;
+
+    // LiME header: magic 0x4C694D45 ("EMiL" little-endian) at byte 0.
+    if n >= 4 && &buf[0..4] == b"EMiL" {
+        return Ok(Some(MemDumpFormat::Lime));
+    }
+    // AVML v2: magic 0x4C4D5641 ("AVML" little-endian) at byte 0.
+    if n >= 4 && &buf[0..4] == b"AVML" {
+        return Ok(Some(MemDumpFormat::Avml));
+    }
+    // Windows kernel crash dump (64-bit): "PAGE" + "DU64" = "PAGEDU64" at byte 0.
+    if n >= 8 && &buf[0..8] == b"PAGEDU64" {
+        return Ok(Some(MemDumpFormat::WinCrashDump));
+    }
+    // ELF core dump: ELF magic at byte 0 and e_type == ET_CORE (4) at byte 16.
+    if n >= 18 && buf[0..4] == [0x7F, b'E', b'L', b'F'] {
+        let e_type = u16::from_le_bytes([buf[16], buf[17]]);
+        if e_type == 4 {
+            return Ok(Some(MemDumpFormat::ElfCore));
+        }
+    }
     Ok(None)
 }
 
