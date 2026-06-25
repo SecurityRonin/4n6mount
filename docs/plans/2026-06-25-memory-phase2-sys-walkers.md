@@ -44,15 +44,25 @@ memf-windows' richer synthetic-EPROCESS fixtures are `#[cfg(test)]` (not exporte
 
 ## Tasks (each RED → GREEN, signed)
 
-- **2.0** `MemoryFs` carries `ObjectReader` (`new(provider, ctx, symbols)`); Phase-1 tests green.
-- **2.1** `sys/processes.txt` — `render_process_table` + lazy artifact + fail-soft header; OS-dispatch (Win/Linux walker).
-- **2.2** `sys/modules.txt` — kernel modules/drivers (`walk_*` modules).
-- **2.3** `sys/network.txt` — netscan (tcp/udp + owner pid).
-- **2.4** `sys/services.txt` — services / systemd units.
-- **2.5** `sys/dmesg.txt` — Linux kernel ring buffer.
+- **2.0** ✅ `MemoryFs` carries `ObjectReader` (`new(provider, ctx, symbols)`); Phase-1 tests green.
+- **2.1** ✅ `sys/processes.txt` — `render_process_table` + lazy artifact + fail-soft header; OS-dispatch (Win/Linux walker). e2e-validated.
+- **2.2** ✅ `sys/modules.txt` — kernel modules/drivers (`walk_drivers`/`walk_modules`).
+- **2.3** ◐ `sys/network.txt` — **Linux only** (`walk_connections`+v6, self-contained). **Windows is a documented gap:** `walk_tcp_endpoints` needs a TCP partition-table VA that the current memf bootstrap does not resolve — `AnalysisContext` carries no such head, memf-session has no resolver, and the memf binary itself never calls this walker (only its tests do, with a hardcoded VA). Windows network surfaces an honest "not resolved" diagnostic, not fabricated content.
+- **2.4** ⊘ **DEFERRED** `sys/services.txt` — `walk_services(reader, list_head_vaddr)` needs a service-record list head that **nothing resolves** (not `AnalysisContext`, not memf-session, not the binary), and there is no Linux analog. Shipping it would be an always-fail "placeholder" artifact, which the fleet disciplines forbid ("No placeholder anything"). **Correct fix is memf-side:** add service-list-head resolution to memf-session (a Phase-0-style extraction), then wire the artifact. Tracked as a memf item.
+- **2.5** ✅ `sys/dmesg.txt` — Linux kernel ring buffer (`extract_dmesg`, self-contained).
 
-Each new artifact: an `Artifact::Sys*` registry node under `sys/`, a pure render
-fn (tier-3 tested), and the fail-soft diagnostic-header contract.
+Each shipped artifact: an `Artifact::Sys*` registry node under `sys/`, a pure
+render fn (tier-3 tested), and the fail-soft diagnostic-header contract.
+
+### Cross-cutting finding (the Windows-head gap)
+
+`pslist`/`modules` work on Windows because `AnalysisContext` carries their heads
+(`PsActiveProcessHead`/`PsLoadedModuleList`, resolved in Phase 0's memf-session).
+`network`/`services` need analogous heads (TCP partition table, service-record
+list) that memf-session does **not** yet resolve and the memf binary does not
+expose. Closing this is a **memf-session extension** (resolve those VAs from
+symbols, like the existing list-heads) — a memf-repo change, not 4n6mount glue.
+Until then, Windows network is gap-diagnosed and services is deferred.
 
 ## Risks
 
