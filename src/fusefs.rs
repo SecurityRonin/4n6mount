@@ -407,8 +407,24 @@ fn root_children(
     fs: &mut dyn ForensicFs,
     root_ino: u64,
 ) -> crate::FsResult<Vec<(u64, Vec<u8>, FileType)>> {
-    let _ = (layout, root_ino, fs.root_ino());
-    Ok(Vec::new()) // RED stub — implemented in the GREEN step.
+    match layout {
+        crate::MountLayout::DiskOverlay => Ok(VIRTUAL_DIRS
+            .iter()
+            .map(|&(ino, name)| (ino, name.as_bytes().to_vec(), FileType::Directory))
+            .collect()),
+        crate::MountLayout::Raw => {
+            let mut out = Vec::new();
+            for e in fs.read_dir(root_ino)? {
+                if e.name == b"." || e.name == b".." {
+                    continue;
+                }
+                // Encode into the ro/ namespace so the existing sub-tree
+                // callbacks (Ro decode) serve everything below the root.
+                out.push((ro_ino(e.inode), e.name, fs_file_type_to_fuse(e.file_type)));
+            }
+            Ok(out)
+        }
+    }
 }
 
 impl Filesystem for ForensicFuseFs {
