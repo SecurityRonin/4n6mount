@@ -8,30 +8,41 @@
 //! held now (unused until the Phase 2 walkers) so the type and its mount wiring
 //! are stable.
 
+use memf_core::object_reader::ObjectReader;
+use memf_core::vas::{TranslationMode, VirtualAddressSpace};
 use memf_format::PhysicalMemoryProvider;
 use memf_session::AnalysisContext;
+use memf_symbols::SymbolResolver;
 
 use crate::mem::inode::{Artifact, Registry, ROOT_INO};
 use crate::{
     not_supported, ForensicFs, FsDirEntry, FsError, FsFileType, FsMetadata, FsResult, FsTimestamp,
 };
 
-/// `ForensicFs` over a memory dump's physical-memory provider.
+/// `ForensicFs` over a memory dump.
 pub struct MemoryFs<P: PhysicalMemoryProvider> {
-    /// The dump's physical memory provider (used by the Phase 2+ walkers).
+    /// Virtual-address reader (owns the provider via its VAS) used by the
+    /// `sys/` and `proc/` walkers; `reader.vas()` backs raw `mem/` reads.
     #[allow(dead_code)]
-    provider: P,
+    reader: ObjectReader<P>,
     /// The bootstrapped analysis context (OS, DTB/CR3, kernel list heads).
     ctx: AnalysisContext,
     registry: Registry,
 }
 
 impl<P: PhysicalMemoryProvider> MemoryFs<P> {
-    /// Build a memory filesystem over `provider` with the static top-level tree
-    /// and the bootstrapped analysis `ctx` (rendered into `sys/os-info.txt`).
-    pub fn new(provider: P, ctx: AnalysisContext) -> Self {
+    /// Build a memory filesystem over `provider`: the static top-level tree, the
+    /// bootstrapped analysis `ctx` (rendered into `sys/os-info.txt`), and an
+    /// `ObjectReader` (provider + DTB + `symbols`) for the walker-backed
+    /// artifacts.
+    ///
+    /// Translation is x86-64 4-level paging — the memf binary's default; ARM /
+    /// 5-level support is a later refinement (tracked in the Phase 2 plan).
+    pub fn new(provider: P, ctx: AnalysisContext, symbols: Box<dyn SymbolResolver>) -> Self {
+        let vas = VirtualAddressSpace::new(provider, ctx.cr3, TranslationMode::X86_64FourLevel);
+        let reader = ObjectReader::new(vas, symbols);
         Self {
-            provider,
+            reader,
             ctx,
             registry: Registry::skeleton(),
         }
@@ -187,6 +198,7 @@ mod tests {
     /// directly-constructed Windows analysis context. The provider is not touched
     /// in Phase 1; the ctx drives `sys/os-info.txt`.
     fn mem_fs() -> MemoryFs<LimeProvider> {
+        use memf_symbols::isf::IsfResolver;
         let dump = LimeBuilder::new().add_range(0, &[0u8; 64]).build();
         let provider = LimeProvider::from_bytes(&dump).unwrap();
         let ctx = AnalysisContext {
@@ -196,7 +208,8 @@ mod tests {
             ps_active_process_head: Some(0xFFFF_F800_DEAD_0000),
             ps_loaded_module_list: Some(0xFFFF_F800_BEEF_0000),
         };
-        MemoryFs::new(provider, ctx)
+        let symbols = Box::new(IsfResolver::from_value(&serde_json::json!({})).unwrap());
+        MemoryFs::new(provider, ctx, symbols)
     }
 
     fn os_info_ino(fs: &mut MemoryFs<LimeProvider>) -> u64 {

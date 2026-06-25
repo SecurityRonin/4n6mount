@@ -269,7 +269,9 @@ pub fn build_memory_fs(
     )
     .map_err(|e| bad(format!("memory analysis bootstrap failed: {e}")))?;
 
-    Ok(Box::new(mem::memoryfs::MemoryFs::new(provider, ctx)))
+    Ok(Box::new(mem::memoryfs::MemoryFs::new(
+        provider, ctx, resolver,
+    )))
 }
 
 /// Mount a forensic filesystem via FUSE (or `WinFSP` on Windows).
@@ -385,8 +387,14 @@ mod memory_tests {
 
         let mut fs = build_memory_fs(&path, None).expect("crash dump must bootstrap");
         // Root is the Raw memory tree: sys/ present, os-info.txt renders the OS.
-        let sys = fs.lookup(mem::inode::ROOT_INO, b"sys").unwrap().expect("sys");
-        let oi = fs.lookup(sys, b"os-info.txt").unwrap().expect("os-info.txt");
+        let sys = fs
+            .lookup(mem::inode::ROOT_INO, b"sys")
+            .unwrap()
+            .expect("sys");
+        let oi = fs
+            .lookup(sys, b"os-info.txt")
+            .unwrap()
+            .expect("os-info.txt");
         let text = String::from_utf8(fs.read_file(oi).unwrap()).unwrap();
         assert!(text.contains("OS: Windows"), "got: {text}");
 
