@@ -10,6 +10,7 @@ pub mod types;
 
 #[cfg(unix)]
 pub mod fuse_unix;
+#[cfg(windows)]
 pub mod fuse_windows;
 
 #[cfg(feature = "ext4")]

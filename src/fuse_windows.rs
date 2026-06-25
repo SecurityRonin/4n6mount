@@ -1,68 +1,259 @@
 #![forbid(unsafe_code)]
 
-use crate::session::Session;
-use crate::ForensicFs;
-use crate::MountOptions;
-use std::io;
-use std::path::Path;
+//! Windows mount backend via WinFsp (the `winfsp` crate, WinFsp 2.x).
+//!
+//! Maps the platform-agnostic [`ForensicFs`] tree onto WinFsp's
+//! [`FileSystemContext`] trait, presenting the filesystem **read-only** at the
+//! mount point. WinFsp addresses files by path (`\dir\file`), so each callback
+//! resolves a path to a `ForensicFs` inode by walking `lookup` from the root;
+//! the inode is the WinFsp file context.
+//!
+//! This is the read-only MVP: it surfaces the `ForensicFs` tree directly (the
+//! `ro/`/`rw/`/`deleted/` overlay parity of the Unix backend is future work).
+//! Writes are rejected — the trait's mutating methods keep their default
+//! `STATUS_INVALID_DEVICE_REQUEST`, so the mount cannot modify evidence.
 
-/// Mount a `ForensicFs` via `WinFSP` on Windows.
-///
-/// This is a stub -- `WinFSP` support will be implemented when the
-/// `winfsp-wrs` crate is integrated.  Until then it unconditionally
-/// returns `io::ErrorKind::Unsupported`.
-pub fn mount_windows(
-    _fs: Box<dyn ForensicFs + Send>,
-    _mountpoint: &Path,
-    _session: Option<Session>,
-    _options: &MountOptions,
-) -> io::Result<()> {
-    Err(io::Error::new(
-        io::ErrorKind::Unsupported,
-        "Windows FUSE (WinFSP) support not yet implemented",
-    ))
+use std::sync::Mutex;
+
+use widestring::U16CStr;
+use windows_sys::Win32::Storage::FileSystem::{
+    FILE_ACCESS_RIGHTS, FILE_ATTRIBUTE_DIRECTORY, FILE_ATTRIBUTE_NORMAL, FILE_FLAGS_AND_ATTRIBUTES,
+};
+use winfsp::filesystem::{
+    DirInfo, DirMarker, FileInfo, FileSecurity, FileSystemContext, OpenFileInfo, VolumeInfo,
+};
+use winfsp::host::{FileSystemHost, VolumeParams};
+use winfsp::winfsp_init_or_die;
+use winfsp::FspError;
+
+use crate::session::Session;
+use crate::{ForensicFs, FsFileType, FsMetadata, FsTimestamp, MountOptions};
+
+/// `STATUS_OBJECT_NAME_NOT_FOUND` — the file/path does not exist.
+const STATUS_OBJECT_NAME_NOT_FOUND: i32 = 0xC000_0034u32 as i32;
+/// `STATUS_IO_DEVICE_ERROR` — an underlying read/parse failed.
+const STATUS_IO_DEVICE_ERROR: i32 = 0xC000_0185u32 as i32;
+
+/// 100-ns intervals between the Windows FILETIME epoch (1601) and Unix (1970).
+const FILETIME_UNIX_OFFSET: u64 = 11_644_473_600;
+
+fn not_found() -> FspError {
+    FspError::NTSTATUS(STATUS_OBJECT_NAME_NOT_FOUND)
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::types::*;
+fn io_error() -> FspError {
+    FspError::NTSTATUS(STATUS_IO_DEVICE_ERROR)
+}
 
-    // Minimal mock so we can call mount_windows without a real fs.
-    struct StubFs;
+/// Convert a Unix `FsTimestamp` to a Windows FILETIME (100-ns since 1601).
+fn to_filetime(ts: FsTimestamp) -> u64 {
+    if ts.seconds <= 0 {
+        return 0;
+    }
+    (ts.seconds as u64 + FILETIME_UNIX_OFFSET) * 10_000_000 + u64::from(ts.nanoseconds) / 100
+}
 
-    impl crate::ForensicFs for StubFs {
-        fn root_ino(&self) -> u64 {
-            2
-        }
-        fn read_dir(&mut self, _ino: u64) -> FsResult<Vec<FsDirEntry>> {
-            Ok(vec![])
-        }
-        fn lookup(&mut self, _parent: u64, _name: &[u8]) -> FsResult<Option<u64>> {
-            Ok(None)
-        }
-        fn metadata(&mut self, _ino: u64) -> FsResult<FsMetadata> {
-            Err(FsError::NotFound("stub".into()))
-        }
-        fn read_file(&mut self, _ino: u64) -> FsResult<Vec<u8>> {
-            Err(FsError::NotFound("stub".into()))
-        }
-        fn read_file_range(&mut self, _ino: u64, _off: u64, _len: u64) -> FsResult<Vec<u8>> {
-            Err(FsError::NotFound("stub".into()))
-        }
-        fn read_link(&mut self, _ino: u64) -> FsResult<Vec<u8>> {
-            Err(FsError::NotFound("stub".into()))
+/// Windows file attributes for a `ForensicFs` file type.
+fn attributes(ft: FsFileType) -> FILE_FLAGS_AND_ATTRIBUTES {
+    match ft {
+        FsFileType::Directory => FILE_ATTRIBUTE_DIRECTORY,
+        _ => FILE_ATTRIBUTE_NORMAL,
+    }
+}
+
+/// A read-only WinFsp view over a `ForensicFs`.
+pub struct WinForensicFs {
+    fs: Mutex<Box<dyn ForensicFs + Send>>,
+    root_ino: u64,
+}
+
+impl WinForensicFs {
+    fn new(fs: Box<dyn ForensicFs + Send>) -> Self {
+        let root_ino = fs.root_ino();
+        Self {
+            fs: Mutex::new(fs),
+            root_ino,
         }
     }
 
-    #[test]
-    fn windows_mount_returns_unsupported() {
-        let fs: Box<dyn ForensicFs + Send> = Box::new(StubFs);
-        let opts = MountOptions::default();
-        let result = mount_windows(fs, Path::new("/mnt"), None, &opts);
-        assert!(result.is_err());
-        let err = result.unwrap_err();
-        assert_eq!(err.kind(), io::ErrorKind::Unsupported);
-        assert!(err.to_string().contains("WinFSP"));
+    /// Resolve a WinFsp path (`\a\b`) to a `ForensicFs` inode by walking
+    /// `lookup` from the root. Returns `None` if any component is missing.
+    fn resolve(&self, path: &U16CStr) -> Option<u64> {
+        let path = path.to_string_lossy();
+        let mut ino = self.root_ino;
+        let mut fs = self.fs.lock().ok()?;
+        for comp in path.split(['\\', '/']).filter(|c| !c.is_empty()) {
+            ino = fs.lookup(ino, comp.as_bytes()).ok().flatten()?;
+        }
+        Some(ino)
     }
+
+    /// Populate a WinFsp `FileInfo` from `ForensicFs` metadata.
+    fn fill(&self, ino: u64, fi: &mut FileInfo) -> Result<(), FspError> {
+        let meta: FsMetadata = {
+            let mut fs = self.fs.lock().map_err(|_| io_error())?;
+            fs.metadata(ino).map_err(|_| not_found())?
+        };
+        fi.file_attributes = attributes(meta.file_type);
+        fi.file_size = meta.size;
+        // Round allocation up to a 4 KiB cluster, mirroring a real volume.
+        fi.allocation_size = meta.size.div_ceil(4096) * 4096;
+        fi.creation_time = to_filetime(meta.crtime);
+        fi.last_access_time = to_filetime(meta.atime);
+        fi.last_write_time = to_filetime(meta.mtime);
+        fi.change_time = to_filetime(meta.ctime);
+        fi.index_number = ino;
+        Ok(())
+    }
+}
+
+impl FileSystemContext for WinForensicFs {
+    /// The file context is the `ForensicFs` inode.
+    type FileContext = u64;
+
+    fn get_security_by_name(
+        &self,
+        file_name: &U16CStr,
+        _security_descriptor: Option<&mut [std::ffi::c_void]>,
+        _reparse_point_resolver: impl FnOnce(&U16CStr) -> Option<FileSecurity>,
+    ) -> Result<FileSecurity, FspError> {
+        let ino = self.resolve(file_name).ok_or_else(not_found)?;
+        let meta = {
+            let mut fs = self.fs.lock().map_err(|_| io_error())?;
+            fs.metadata(ino).map_err(|_| not_found())?
+        };
+        Ok(FileSecurity {
+            reparse: false,
+            // No ACLs are surfaced (persistent_acls is off); the descriptor is empty.
+            sz_security_descriptor: 0,
+            attributes: attributes(meta.file_type),
+        })
+    }
+
+    fn open(
+        &self,
+        file_name: &U16CStr,
+        _create_options: u32,
+        _granted_access: FILE_ACCESS_RIGHTS,
+        file_info: &mut OpenFileInfo,
+    ) -> Result<Self::FileContext, FspError> {
+        let ino = self.resolve(file_name).ok_or_else(not_found)?;
+        self.fill(ino, file_info.as_mut())?;
+        Ok(ino)
+    }
+
+    fn close(&self, _context: Self::FileContext) {}
+
+    fn get_file_info(
+        &self,
+        context: &Self::FileContext,
+        file_info: &mut FileInfo,
+    ) -> Result<(), FspError> {
+        self.fill(*context, file_info)
+    }
+
+    fn read(
+        &self,
+        context: &Self::FileContext,
+        buffer: &mut [u8],
+        offset: u64,
+    ) -> Result<u32, FspError> {
+        let data = {
+            let mut fs = self.fs.lock().map_err(|_| io_error())?;
+            fs.read_file_range(*context, offset, buffer.len() as u64)
+                .map_err(|_| io_error())?
+        };
+        let n = data.len().min(buffer.len());
+        buffer[..n].copy_from_slice(&data[..n]);
+        Ok(n as u32)
+    }
+
+    fn read_directory(
+        &self,
+        context: &Self::FileContext,
+        _pattern: Option<&U16CStr>,
+        marker: DirMarker,
+        buffer: &mut [u8],
+    ) -> Result<u32, FspError> {
+        // Snapshot the directory's children (name, inode), sorted by name for a
+        // stable order across resumed (marker-based) calls.
+        let mut entries: Vec<(String, u64)> = {
+            let mut fs = self.fs.lock().map_err(|_| io_error())?;
+            fs.read_dir(*context)
+                .map_err(|_| io_error())?
+                .into_iter()
+                .filter(|e| e.name != b"." && e.name != b"..")
+                .map(|e| (String::from_utf8_lossy(&e.name).into_owned(), e.inode))
+                .collect()
+        };
+        entries.sort_by(|a, b| a.0.cmp(&b.0));
+
+        // Resume after the marker (WinFsp re-calls with the last name once the
+        // buffer fills); skip everything up to and including it.
+        let marker_name = marker.inner_as_cstr().map(U16CStr::to_string_lossy);
+        let start = match &marker_name {
+            Some(m) => entries
+                .iter()
+                .position(|(n, _)| n > m)
+                .unwrap_or(entries.len()),
+            None => 0,
+        };
+
+        let mut cursor = 0u32;
+        let mut dir_info: DirInfo<255> = DirInfo::new();
+        for (name, ino) in &entries[start..] {
+            dir_info.reset();
+            if self.fill(*ino, dir_info.file_info_mut()).is_err() {
+                continue;
+            }
+            let name_u16: Vec<u16> = name.encode_utf16().collect();
+            dir_info.set_name_raw(&name_u16)?;
+            if !dir_info.append_to_buffer(buffer, &mut cursor) {
+                return Ok(cursor);
+            }
+        }
+        DirInfo::<255>::finalize_buffer(buffer, &mut cursor);
+        Ok(cursor)
+    }
+
+    fn get_volume_info(&self, out: &mut VolumeInfo) -> Result<(), FspError> {
+        // Size is informational for a read-only forensic view; report no free
+        // space (the volume cannot be written).
+        out.total_size = 0;
+        out.free_size = 0;
+        Ok(())
+    }
+}
+
+/// Mount a `ForensicFs` via WinFsp at `mountpoint` (a drive letter `X:` or a
+/// directory). Read-only; `session` is unused (no rw overlay on Windows yet).
+pub fn mount_windows(
+    fs: Box<dyn ForensicFs + Send>,
+    mountpoint: &std::path::Path,
+    _session: Option<Session>,
+    options: &MountOptions,
+) -> std::io::Result<()> {
+    let _init = winfsp_init_or_die();
+
+    let mut volume_params = VolumeParams::new();
+    volume_params
+        .sector_size(4096)
+        .sectors_per_allocation_unit(1)
+        .case_sensitive_search(true)
+        .case_preserved_names(true)
+        .unicode_on_disk(true)
+        .persistent_acls(false)
+        .filesystem_name(&options.fs_name);
+
+    let context = WinForensicFs::new(fs);
+    let mut host = FileSystemHost::new(volume_params, context)
+        .map_err(|e| std::io::Error::other(format!("WinFsp host: {e:?}")))?;
+    host.mount(mountpoint.as_os_str())
+        .map_err(|e| std::io::Error::other(format!("WinFsp mount: {e:?}")))?;
+    host.start()
+        .map_err(|e| std::io::Error::other(format!("WinFsp start: {e:?}")))?;
+
+    // Block while WinFsp serves on its own threads, until the process is signalled.
+    std::thread::park();
+    Ok(())
 }
