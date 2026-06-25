@@ -3,6 +3,7 @@
 pub mod archive_tree;
 pub mod detect;
 pub mod filter;
+#[cfg(unix)]
 pub mod fusefs;
 pub mod inode_map;
 pub mod session;
