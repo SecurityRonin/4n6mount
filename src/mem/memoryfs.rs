@@ -161,15 +161,71 @@ impl<P: PhysicalMemoryProvider> MemoryFs<P> {
 
     /// Render `sys/network.txt`: the OS-appropriate connection walker, or a
     /// one-line diagnostic on a walker miss/error (fail-soft).
+    ///
+    /// Linux uses the self-contained `walk_connections`(+v6). Windows
+    /// `walk_tcp_endpoints` needs a TCP partition-table VA that the current memf
+    /// bootstrap does not resolve, so Windows surfaces an honest diagnostic
+    /// (a real gap, not fabricated content) rather than empty output.
     fn render_network(&self) -> String {
-        // RED stub — implemented in the GREEN step.
-        String::new()
+        use memf_session::OsProfile;
+        let rows: Result<Vec<NetRow>, String> = match self.ctx.os {
+            OsProfile::Linux => match memf_linux::network::walk_connections(&self.reader) {
+                Ok(mut conns) => {
+                    if let Ok(v6) = memf_linux::network::walk_connections6(&self.reader) {
+                        conns.extend(v6);
+                    }
+                    Ok(conns.into_iter().map(NetRow::from).collect())
+                }
+                Err(e) => Err(format!("{e}")),
+            },
+            OsProfile::Windows => Err(
+                "Windows TCP partition-table VA not resolved by the current memf \
+                 bootstrap (network walk needs a memf-side head, like pslist's)"
+                    .to_string(),
+            ),
+            OsProfile::MacOs => Err("not implemented for macOS".to_string()),
+        };
+        match rows {
+            Ok(rows) if !rows.is_empty() => render_net_table(&rows),
+            Ok(_) => format!(
+                "# network: 0 connections (walker returned empty)\n{}",
+                render_net_table(&[])
+            ),
+            Err(why) => format!("# network unavailable: {why}\n"),
+        }
     }
 
-    /// Render `sys/dmesg.txt` (Linux kernel ring buffer), or a diagnostic.
+    /// Render `sys/dmesg.txt` from the Linux kernel ring buffer
+    /// (`memf_linux::dmesg::extract_dmesg`), or an honest diagnostic on a
+    /// non-Linux dump or a walker miss.
     fn render_dmesg_file(&self) -> String {
-        // RED stub — implemented in the GREEN step.
-        String::new()
+        use memf_session::OsProfile;
+        if self.ctx.os != OsProfile::Linux {
+            return format!("# dmesg unavailable: not a Linux dump ({})\n", self.ctx.os);
+        }
+        match memf_linux::dmesg::extract_dmesg(&self.reader) {
+            Ok(entries) if !entries.is_empty() => {
+                let rows: Vec<(u64, String)> = entries
+                    .into_iter()
+                    .map(|e| (e.timestamp_ns, e.message))
+                    .collect();
+                render_dmesg(&rows)
+            }
+            Ok(_) => "# dmesg: empty (log_buf absent or ring buffer empty)\n".to_string(),
+            Err(e) => format!("# dmesg unavailable: {e}\n"),
+        }
+    }
+}
+
+impl From<memf_linux::ConnectionInfo> for NetRow {
+    fn from(c: memf_linux::ConnectionInfo) -> Self {
+        Self {
+            protocol: c.protocol.to_string(),
+            local: format!("{}:{}", c.local_addr, c.local_port),
+            remote: format!("{}:{}", c.remote_addr, c.remote_port),
+            state: c.state.to_string(),
+            pid: c.pid.map(|p| p.to_string()).unwrap_or_default(),
+        }
     }
 }
 
@@ -277,16 +333,23 @@ pub(crate) struct NetRow {
 
 /// Render a connection list as a tab-separated table with a column header.
 pub(crate) fn render_net_table(rows: &[NetRow]) -> String {
-    // RED stub — implemented in the GREEN step.
-    let _ = rows;
-    String::new()
+    let mut out = String::from("PROTO\tLOCAL\tREMOTE\tSTATE\tPID\n");
+    for r in rows {
+        out.push_str(&format!(
+            "{}\t{}\t{}\t{}\t{}\n",
+            r.protocol, r.local, r.remote, r.state, r.pid
+        ));
+    }
+    out
 }
 
-/// Render the kernel ring buffer as `[timestamp] message` lines.
+/// Render the kernel ring buffer as `[timestamp_ns] message` lines.
 pub(crate) fn render_dmesg(entries: &[(u64, String)]) -> String {
-    // RED stub — implemented in the GREEN step.
-    let _ = entries;
-    String::new()
+    let mut out = String::new();
+    for (ts, msg) in entries {
+        out.push_str(&format!("[{ts}] {msg}\n"));
+    }
+    out
 }
 
 impl<P: PhysicalMemoryProvider> ForensicFs for MemoryFs<P> {
