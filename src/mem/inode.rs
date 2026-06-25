@@ -20,6 +20,8 @@ pub enum Artifact {
     Dir,
     /// `sys/os-info.txt` — the analysis profile, rendered from `AnalysisContext`.
     SysOsInfo,
+    /// `sys/processes.txt` — pslist, rendered from the memf process walker.
+    SysProcesses,
 }
 
 /// One node in the synthetic tree.
@@ -69,8 +71,9 @@ impl Registry {
         for (ino, name) in [(3, "sys"), (4, "proc"), (5, "forensic"), (6, "mem")] {
             registry.add_dir(ROOT_INO, ino, name);
         }
-        // sys/os-info.txt — the first lazily-rendered artifact.
+        // sys/ lazily-rendered artifacts.
         registry.add_file(3, 7, "os-info.txt", Artifact::SysOsInfo);
+        registry.add_file(3, 8, "processes.txt", Artifact::SysProcesses);
         registry
     }
 

@@ -105,6 +105,33 @@ impl<P: PhysicalMemoryProvider> MemoryFs<P> {
             addr(c.ps_loaded_module_list),
         )
     }
+
+    /// Render `sys/processes.txt`: run the OS-appropriate memf process walker and
+    /// format it, or — on a walker miss/error after a good bootstrap — return a
+    /// one-line diagnostic header (never a hard error or silent empty).
+    fn render_processes(&self) -> String {
+        // RED stub — implemented in the GREEN step.
+        String::new()
+    }
+}
+
+/// One pslist row, normalized across OSes for rendering.
+#[derive(Debug, Clone)]
+pub(crate) struct ProcRow {
+    pub pid: u64,
+    pub ppid: u64,
+    pub name: String,
+    /// Creation time, OS-native units (Windows FILETIME / Linux ns since boot);
+    /// rendered verbatim — interpretation is the examiner's, like memf's output.
+    pub create_time: u64,
+}
+
+/// Render a pslist as a tab-separated table with a column header. An empty slice
+/// yields just the header line (the caller adds a diagnostic comment).
+pub(crate) fn render_process_table(rows: &[ProcRow]) -> String {
+    // RED stub — implemented in the GREEN step.
+    let _ = rows;
+    String::new()
 }
 
 impl<P: PhysicalMemoryProvider> ForensicFs for MemoryFs<P> {
@@ -152,6 +179,10 @@ impl<P: PhysicalMemoryProvider> ForensicFs for MemoryFs<P> {
             Artifact::Dir => Ok(Self::dir_metadata(ino)),
             // Render to report a real size so getattr-then-cat works in tools.
             Artifact::SysOsInfo => Ok(Self::file_metadata(ino, self.render_os_info().len() as u64)),
+            Artifact::SysProcesses => Ok(Self::file_metadata(
+                ino,
+                self.render_processes().len() as u64,
+            )),
         }
     }
 
@@ -164,6 +195,7 @@ impl<P: PhysicalMemoryProvider> ForensicFs for MemoryFs<P> {
             .clone();
         match artifact {
             Artifact::SysOsInfo => Ok(self.render_os_info().into_bytes()),
+            Artifact::SysProcesses => Ok(self.render_processes().into_bytes()),
             Artifact::Dir => Err(not_supported("read_file on a directory")),
         }
     }
@@ -281,5 +313,72 @@ mod tests {
     fn fs_info_reports_memory() {
         let fs = mem_fs();
         assert_eq!(fs.fs_info().unwrap()["type"], "memory");
+    }
+
+    // -- sys/processes.txt (Task 2.1) --
+
+    #[test]
+    fn render_process_table_has_header_and_rows() {
+        let rows = vec![
+            ProcRow {
+                pid: 4,
+                ppid: 0,
+                name: "System".into(),
+                create_time: 0,
+            },
+            ProcRow {
+                pid: 668,
+                ppid: 4,
+                name: "lsass.exe".into(),
+                create_time: 132_000_000,
+            },
+        ];
+        let out = render_process_table(&rows);
+        let header = out.lines().next().unwrap_or_default();
+        assert!(
+            header.contains("PID") && header.contains("PPID") && header.contains("NAME"),
+            "header: {header:?}"
+        );
+        assert!(
+            out.contains("System") && out.contains("\t4\t"),
+            "got: {out}"
+        );
+        assert!(
+            out.contains("668") && out.contains("lsass.exe"),
+            "got: {out}"
+        );
+    }
+
+    #[test]
+    fn render_process_table_empty_is_just_header() {
+        let out = render_process_table(&[]);
+        assert_eq!(out.lines().count(), 1, "empty list → header only: {out:?}");
+        assert!(out.contains("PID"));
+    }
+
+    #[test]
+    fn processes_txt_is_a_regular_file_under_sys() {
+        let mut fs = mem_fs();
+        let sys = fs.lookup(ROOT_INO, b"sys").unwrap().unwrap();
+        let p = fs
+            .lookup(sys, b"processes.txt")
+            .unwrap()
+            .expect("processes.txt");
+        assert_eq!(fs.metadata(p).unwrap().file_type, FsFileType::RegularFile);
+    }
+
+    #[test]
+    fn processes_txt_fail_soft_diagnostic_not_empty() {
+        // The synthetic provider has no real EPROCESS list, so the walker misses;
+        // read_file must return a non-empty diagnostic, never panic or empty.
+        let mut fs = mem_fs();
+        let sys = fs.lookup(ROOT_INO, b"sys").unwrap().unwrap();
+        let p = fs.lookup(sys, b"processes.txt").unwrap().unwrap();
+        let text = String::from_utf8(fs.read_file(p).unwrap()).unwrap();
+        assert!(!text.is_empty(), "must surface a diagnostic, not empty");
+        assert!(
+            text.contains("pslist"),
+            "expected a pslist diagnostic: {text}"
+        );
     }
 }
