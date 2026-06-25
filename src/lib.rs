@@ -39,6 +39,9 @@ pub mod fs_exfat;
 #[cfg(feature = "apfs")]
 pub mod fs_apfs;
 
+#[cfg(feature = "memory")]
+pub mod mem;
+
 pub mod fs_raw;
 
 pub use types::*;

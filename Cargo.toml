@@ -20,6 +20,7 @@ ntfs = ["dep:ntfs-core"]
 hfsplus = ["dep:hfsplus-forensic"]
 exfat = ["dep:exfat-fs"]
 apfs = ["dep:apfs-core"]
+memory = []  # RED: deps wired in the GREEN step
 tarball = ["dep:tar", "dep:flate2", "dep:bzip2"]
 zip = ["dep:zip"]
 sevenz = ["dep:sevenz-rust"]
