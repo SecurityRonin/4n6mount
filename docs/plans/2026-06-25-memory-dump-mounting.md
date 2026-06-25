@@ -1,5 +1,15 @@
 # Memory-Dump Mounting Implementation Plan
 
+> **STATUS (2026-06-25): Phase 0 is DONE — start at Phase 1.**
+> Phase 0 (extract the memf analysis bootstrap into a library crate) is complete:
+> the `memf-session` crate is merged into `memory-forensic` main and shipped in its
+> **v0.1.0** release (16 unit + 2 integration tests green; `build_analysis_context`,
+> `detect_os`, `extract_cr3`, `resolve_kernel_list_heads` now live in
+> `memory-forensic/crates/memf-session`). Depend on it as a path+version crate
+> (`{ version = "0.2", path = "../memory-forensic/crates/memf-session" }`).
+> **Do not re-do the extraction.** The next task is **Phase 1, Task 1.1** (deps + the
+> `memory` feature), then the `MemoryFs` skeleton and `sys/os-info.txt`.
+
 > **For Claude:** REQUIRED SUB-SKILL: use `superpowers:executing-plans` (or `subagent-driven-development`) to implement this task-by-task. Strict TDD: separate RED and GREEN commits per task.
 
 **Goal:** Extend 4n6mount to mount a **memory dump** (any format) as a browsable filesystem — the MemProcFS / MemNixFS paradigm — reusing memf's walkers, so an examiner runs `4n6mount memory.lime /mnt/case` and browses `proc/<pid>/`, `sys/`, `forensic/` with `ls`/`cat`/`grep`.
