@@ -9,8 +9,9 @@
 //! are stable.
 
 use memf_format::PhysicalMemoryProvider;
+use memf_session::AnalysisContext;
 
-use crate::mem::inode::{Registry, ROOT_INO};
+use crate::mem::inode::{Artifact, Registry, ROOT_INO};
 use crate::{
     not_supported, ForensicFs, FsDirEntry, FsError, FsFileType, FsMetadata, FsResult, FsTimestamp,
 };
@@ -20,14 +21,18 @@ pub struct MemoryFs<P: PhysicalMemoryProvider> {
     /// The dump's physical memory provider (used by the Phase 2+ walkers).
     #[allow(dead_code)]
     provider: P,
+    /// The bootstrapped analysis context (OS, DTB/CR3, kernel list heads).
+    ctx: AnalysisContext,
     registry: Registry,
 }
 
 impl<P: PhysicalMemoryProvider> MemoryFs<P> {
-    /// Build a memory filesystem over `provider` with the static top-level tree.
-    pub fn new(provider: P) -> Self {
+    /// Build a memory filesystem over `provider` with the static top-level tree
+    /// and the bootstrapped analysis `ctx` (rendered into `sys/os-info.txt`).
+    pub fn new(provider: P, ctx: AnalysisContext) -> Self {
         Self {
             provider,
+            ctx,
             registry: Registry::skeleton(),
         }
     }
@@ -131,12 +136,49 @@ mod tests {
     use super::*;
     use memf_format::lime::LimeProvider;
     use memf_format::test_builders::LimeBuilder;
+    use memf_session::OsProfile;
 
-    /// A `MemoryFs` over a trivial real provider (a 1-page LiME dump). Phase 1
-    /// does not touch the provider, so any valid provider exercises the tree.
+    /// A `MemoryFs` over a trivial real provider (a 1-page LiME dump) with a
+    /// directly-constructed Windows analysis context. The provider is not touched
+    /// in Phase 1; the ctx drives `sys/os-info.txt`.
     fn mem_fs() -> MemoryFs<LimeProvider> {
         let dump = LimeBuilder::new().add_range(0, &[0u8; 64]).build();
-        MemoryFs::new(LimeProvider::from_bytes(&dump).unwrap())
+        let provider = LimeProvider::from_bytes(&dump).unwrap();
+        let ctx = AnalysisContext {
+            os: OsProfile::Windows,
+            cr3: 0x1ab000,
+            kaslr_offset: 0,
+            ps_active_process_head: Some(0xFFFF_F800_DEAD_0000),
+            ps_loaded_module_list: Some(0xFFFF_F800_BEEF_0000),
+        };
+        MemoryFs::new(provider, ctx)
+    }
+
+    fn os_info_ino(fs: &mut MemoryFs<LimeProvider>) -> u64 {
+        let sys = fs.lookup(ROOT_INO, b"sys").unwrap().expect("sys");
+        fs.lookup(sys, b"os-info.txt")
+            .unwrap()
+            .expect("os-info.txt")
+    }
+
+    #[test]
+    fn os_info_is_a_regular_file_under_sys() {
+        let mut fs = mem_fs();
+        let ino = os_info_ino(&mut fs);
+        assert_eq!(fs.metadata(ino).unwrap().file_type, FsFileType::RegularFile);
+    }
+
+    #[test]
+    fn os_info_renders_analysis_profile() {
+        let mut fs = mem_fs();
+        let ino = os_info_ino(&mut fs);
+        let text = String::from_utf8(fs.read_file(ino).unwrap()).unwrap();
+        assert!(text.contains("OS: Windows"), "got: {text}");
+        assert!(text.contains("DTB/CR3: 0x1ab000"), "got: {text}");
+        assert!(
+            text.contains("PsActiveProcessHead: 0xfffff800dead0000"),
+            "got: {text}"
+        );
     }
 
     #[test]

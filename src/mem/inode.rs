@@ -13,12 +13,13 @@ use std::collections::HashMap;
 /// Root inode of the memory VFS (mirrors the disk providers' root = 2).
 pub const ROOT_INO: u64 = 2;
 
-/// What a synthetic inode represents. Phase 1 has only directories; later phases
-/// add `System` / `Process` / `Forensic` / `RawMem` file artifacts that render
-/// their bytes lazily in `read_file`.
+/// What a synthetic inode represents. Directories plus the lazily-rendered file
+/// artifacts; later phases add the `proc/`, `forensic/`, and `mem/` artifacts.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Artifact {
     Dir,
+    /// `sys/os-info.txt` — the analysis profile, rendered from `AnalysisContext`.
+    SysOsInfo,
 }
 
 /// One node in the synthetic tree.
@@ -68,13 +69,33 @@ impl Registry {
         for (ino, name) in [(3, "sys"), (4, "proc"), (5, "forensic"), (6, "mem")] {
             registry.add_dir(ROOT_INO, ino, name);
         }
+        // sys/os-info.txt — the first lazily-rendered artifact.
+        registry.add_file(3, 7, "os-info.txt", Artifact::SysOsInfo);
         registry
     }
 
-    /// Add a child directory under `parent`, returning its inode.
+    /// Add a child directory under `parent`.
     fn add_dir(&mut self, parent: u64, ino: u64, name: &str) {
-        self.nodes.insert(ino, Node::dir(name));
-        self.index.insert((parent, name.as_bytes().to_vec()), ino);
+        self.add_node(parent, ino, Node::dir(name));
+    }
+
+    /// Add a child file `artifact` named `name` under `parent`.
+    fn add_file(&mut self, parent: u64, ino: u64, name: &str, artifact: Artifact) {
+        self.add_node(
+            parent,
+            ino,
+            Node {
+                name: name.as_bytes().to_vec(),
+                artifact,
+                children: vec![],
+            },
+        );
+    }
+
+    fn add_node(&mut self, parent: u64, ino: u64, node: Node) {
+        let key = (parent, node.name.clone());
+        self.nodes.insert(ino, node);
+        self.index.insert(key, ino);
         if let Some(p) = self.nodes.get_mut(&parent) {
             p.children.push(ino);
         }
