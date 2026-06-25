@@ -20,6 +20,11 @@ struct Cli {
     #[arg(long)]
     fs: Option<String>,
 
+    /// Symbol file (ISF JSON or PDB) for memory-dump analysis. Optional for a
+    /// Windows crash dump whose header carries CR3 + kernel list heads.
+    #[arg(long)]
+    symbols: Option<String>,
+
     /// Session directory for COW overlay persistence
     #[arg(long)]
     session: Option<String>,
@@ -103,6 +108,18 @@ fn main() {
         eprintln!("Cannot open {image}: {e}");
         std::process::exit(1);
     });
+
+    // Memory-dump path: explicit `--fs memory`, or a recognized dump signature.
+    // A memory dump mounts read-only with the Raw layout (its own top level),
+    // bypassing the disk overlay entirely.
+    let force_memory = matches!(cli.fs.as_deref(), Some("memory" | "mem"));
+    let detected_memory = forensic_mount::detect::detect_memory_dump(&mut file)
+        .ok()
+        .flatten();
+    if force_memory || detected_memory.is_some() {
+        route_memory_mount(&image, &mountpoint, cli.symbols.as_deref(), cli.daemon);
+        return;
+    }
 
     let fs_type = if let Some(fs_str) = &cli.fs {
         fs_str
@@ -205,6 +222,42 @@ fn main() {
     });
 }
 
+/// Build and mount a memory dump as a read-only `Raw`-layout filesystem.
+#[cfg(feature = "memory")]
+fn route_memory_mount(image: &str, mountpoint: &str, symbols: Option<&str>, daemon: bool) {
+    let fs = forensic_mount::build_memory_fs(
+        std::path::Path::new(image),
+        symbols.map(std::path::Path::new),
+    )
+    .unwrap_or_else(|e| {
+        eprintln!("{e}");
+        std::process::exit(1);
+    });
+    let options = forensic_mount::MountOptions {
+        read_only: true,
+        daemon,
+        fs_name: "4n6mount-memory".to_string(),
+        layout: forensic_mount::MountLayout::Raw,
+    };
+    eprintln!("Mounting memory dump {image} at {mountpoint}");
+    forensic_mount::mount(fs, std::path::Path::new(mountpoint), None, &options).unwrap_or_else(
+        |e| {
+            eprintln!("Mount failed: {e}");
+            std::process::exit(1);
+        },
+    );
+}
+
+/// Memory support was not compiled in: fail loud rather than silently misroute.
+#[cfg(not(feature = "memory"))]
+fn route_memory_mount(_image: &str, _mountpoint: &str, _symbols: Option<&str>, _daemon: bool) {
+    eprintln!(
+        "This build has no memory-dump support (the `memory` feature was not enabled). \
+         Rebuild with `--features memory`."
+    );
+    std::process::exit(1);
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -248,6 +301,21 @@ mod tests {
             "--resume",
         ]);
         assert!(cli.resume);
+    }
+
+    #[test]
+    fn parse_mount_with_symbols() {
+        let cli = Cli::parse_from([
+            "4n6mount",
+            "memory.lime",
+            "/mnt",
+            "--fs",
+            "memory",
+            "--symbols",
+            "linux.json",
+        ]);
+        assert_eq!(cli.fs.unwrap(), "memory");
+        assert_eq!(cli.symbols.unwrap(), "linux.json");
     }
 
     #[test]

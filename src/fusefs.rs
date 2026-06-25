@@ -830,16 +830,12 @@ impl Filesystem for ForensicFuseFs {
             ];
             {
                 let mut fs = self.fs.borrow_mut();
-                match root_children(self.layout, &mut **fs, self.root_ino) {
-                    Ok(children) => {
-                        for (fino, name, kind) in children {
-                            entries.push((fino, kind, String::from_utf8_lossy(&name).into_owned()));
-                        }
-                    }
-                    Err(_) => {
-                        reply.error(libc::EIO);
-                        return;
-                    }
+                let Ok(children) = root_children(self.layout, &mut **fs, self.root_ino) else {
+                    reply.error(libc::EIO);
+                    return;
+                };
+                for (fino, name, kind) in children {
+                    entries.push((fino, kind, String::from_utf8_lossy(&name).into_owned()));
                 }
             }
             for (i, (entry_ino, kind, name)) in entries.iter().enumerate().skip(offset) {

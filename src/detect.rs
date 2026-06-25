@@ -161,13 +161,13 @@ pub fn detect_filesystem<R: Read + Seek>(source: &mut R) -> io::Result<FsType> {
 /// path (a `MemoryFs` over memf), not the disk-filesystem dispatch.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MemDumpFormat {
-    /// LiME (Linux Memory Extractor) — magic "EMiL".
+    /// `LiME` (Linux Memory Extractor) — magic `EMiL`.
     Lime,
-    /// AVML (Acquisition of Volatile Memory for Linux) v2 — magic "AVML".
+    /// AVML (Acquisition of Volatile Memory for Linux) v2 — magic `AVML`.
     Avml,
     /// ELF core dump (`ET_CORE`).
     ElfCore,
-    /// Windows kernel crash dump (64-bit) — magic "PAGEDU64".
+    /// Windows kernel crash dump (64-bit) — magic `PAGEDU64`.
     WinCrashDump,
 }
 
@@ -186,8 +186,8 @@ impl std::fmt::Display for MemDumpFormat {
 ///
 /// Returns `Ok(None)` for non-dumps — including raw/headerless dumps, which
 /// carry no signature and must be selected explicitly (`--fs memory`). The seek
-/// position is reset to 0. Magics mirror `memf-format`'s plugins (LiME
-/// `0x4C694D45`, AVML `0x4C4D5641`, ELF `ET_CORE`, crash `PAGE`+`DU64`).
+/// position is reset to 0. Magics mirror `memf-format`'s plugins (`LiME`
+/// `0x4C694D45`, AVML `0x4C4D5641`, ELF `ET_CORE`, crash `PAGE` + `DU64`).
 pub fn detect_memory_dump<R: Read + Seek>(source: &mut R) -> io::Result<Option<MemDumpFormat>> {
     source.seek(SeekFrom::Start(0))?;
     let mut buf = [0u8; 18];
