@@ -53,6 +53,47 @@ impl<P: PhysicalMemoryProvider> MemoryFs<P> {
             allocated: true,
         }
     }
+
+    fn file_metadata(ino: u64, size: u64) -> FsMetadata {
+        FsMetadata {
+            ino,
+            file_type: FsFileType::RegularFile,
+            mode: 0o100_444,
+            uid: 0,
+            gid: 0,
+            size,
+            links_count: 1,
+            atime: FsTimestamp::default(),
+            mtime: FsTimestamp::default(),
+            ctime: FsTimestamp::default(),
+            crtime: FsTimestamp::default(),
+            allocated: true,
+        }
+    }
+
+    /// Render `sys/os-info.txt` from the analysis context. Fields the extracted
+    /// `AnalysisContext` does not carry (kernel base, symbol source) are marked
+    /// "not surfaced" rather than fabricated — to be filled by a later
+    /// `memf-session` extension.
+    fn render_os_info(&self) -> String {
+        let c = &self.ctx;
+        let addr =
+            |o: Option<u64>| o.map_or_else(|| "not resolved".to_string(), |v| format!("{v:#x}"));
+        format!(
+            "OS: {}\n\
+             DTB/CR3: {:#x}\n\
+             KASLR offset: {:#x}\n\
+             PsActiveProcessHead: {}\n\
+             PsLoadedModuleList: {}\n\
+             Kernel base: not surfaced (pending memf-session extension)\n\
+             Symbol source: not surfaced (pending memf-session extension)\n",
+            c.os,
+            c.cr3,
+            c.kaslr_offset,
+            addr(c.ps_active_process_head),
+            addr(c.ps_loaded_module_list),
+        )
+    }
 }
 
 impl<P: PhysicalMemoryProvider> ForensicFs for MemoryFs<P> {
@@ -90,33 +131,37 @@ impl<P: PhysicalMemoryProvider> ForensicFs for MemoryFs<P> {
     }
 
     fn metadata(&mut self, ino: u64) -> FsResult<FsMetadata> {
-        let node = self
+        let artifact = self
             .registry
             .node(ino)
-            .ok_or_else(|| FsError::NotFound(format!("inode {ino}")))?;
-        // Phase 1: every registered node is a directory.
-        if node.is_dir() {
-            Ok(Self::dir_metadata(ino))
-        } else {
-            Err(not_supported(
-                "memory file metadata arrives in a later phase",
-            ))
+            .ok_or_else(|| FsError::NotFound(format!("inode {ino}")))?
+            .artifact
+            .clone();
+        match artifact {
+            Artifact::Dir => Ok(Self::dir_metadata(ino)),
+            // Render to report a real size so getattr-then-cat works in tools.
+            Artifact::SysOsInfo => Ok(Self::file_metadata(ino, self.render_os_info().len() as u64)),
         }
     }
 
     fn read_file(&mut self, ino: u64) -> FsResult<Vec<u8>> {
-        // Phase 1 has only directories; lazy artifact rendering is a later phase.
-        let _ = ino;
-        Err(not_supported(
-            "memory artifact rendering arrives in a later phase",
-        ))
+        let artifact = self
+            .registry
+            .node(ino)
+            .ok_or_else(|| FsError::NotFound(format!("inode {ino}")))?
+            .artifact
+            .clone();
+        match artifact {
+            Artifact::SysOsInfo => Ok(self.render_os_info().into_bytes()),
+            Artifact::Dir => Err(not_supported("read_file on a directory")),
+        }
     }
 
-    fn read_file_range(&mut self, ino: u64, _offset: u64, _len: u64) -> FsResult<Vec<u8>> {
-        let _ = ino;
-        Err(not_supported(
-            "memory artifact rendering arrives in a later phase",
-        ))
+    fn read_file_range(&mut self, ino: u64, offset: u64, len: u64) -> FsResult<Vec<u8>> {
+        let data = self.read_file(ino)?;
+        let start = (offset as usize).min(data.len());
+        let end = start.saturating_add(len as usize).min(data.len());
+        Ok(data[start..end].to_vec())
     }
 
     fn read_link(&mut self, _ino: u64) -> FsResult<Vec<u8>> {
