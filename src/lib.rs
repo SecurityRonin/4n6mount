@@ -243,8 +243,33 @@ pub fn build_memory_fs(
     image: &Path,
     symbols: Option<&Path>,
 ) -> io::Result<Box<dyn ForensicFs + Send>> {
-    let _ = (image, symbols);
-    todo!("build_memory_fs")
+    let bad = |msg: String| io::Error::new(io::ErrorKind::InvalidData, msg);
+
+    let provider = memf_format::open_dump(image)
+        .map_err(|e| bad(format!("cannot open memory dump {}: {e}", image.display())))?;
+
+    // Load symbols if given; otherwise an empty resolver (sufficient for a
+    // crash dump whose header carries CR3 + list-heads).
+    let resolver: Box<dyn memf_symbols::SymbolResolver> = match symbols {
+        Some(p) => Box::new(
+            memf_symbols::isf::IsfResolver::from_path(p)
+                .map_err(|e| bad(format!("cannot load symbols {}: {e}", p.display())))?,
+        ),
+        None => Box::new(
+            memf_symbols::isf::IsfResolver::from_value(&serde_json::json!({}))
+                .map_err(|e| bad(format!("empty symbol resolver: {e}")))?,
+        ),
+    };
+
+    let metadata = provider.metadata();
+    let ctx = memf_session::build_analysis_context(
+        metadata.as_ref(),
+        resolver.as_ref(),
+        provider.as_ref(),
+    )
+    .map_err(|e| bad(format!("memory analysis bootstrap failed: {e}")))?;
+
+    Ok(Box::new(mem::memoryfs::MemoryFs::new(provider, ctx)))
 }
 
 /// Mount a forensic filesystem via FUSE (or `WinFSP` on Windows).
