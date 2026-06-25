@@ -110,8 +110,49 @@ impl<P: PhysicalMemoryProvider> MemoryFs<P> {
     /// format it, or — on a walker miss/error after a good bootstrap — return a
     /// one-line diagnostic header (never a hard error or silent empty).
     fn render_processes(&self) -> String {
-        // RED stub — implemented in the GREEN step.
-        String::new()
+        use memf_session::OsProfile;
+        let rows: Result<Vec<ProcRow>, String> = match self.ctx.os {
+            OsProfile::Windows => match self.ctx.ps_active_process_head {
+                Some(head) => memf_windows::process::walk_processes(&self.reader, head)
+                    .map(|ps| ps.into_iter().map(ProcRow::from).collect())
+                    .map_err(|e| format!("{e}")),
+                None => Err("PsActiveProcessHead not resolved (need --symbols?)".to_string()),
+            },
+            OsProfile::Linux => memf_linux::process::walk_processes(&self.reader)
+                .map(|ps| ps.into_iter().map(ProcRow::from).collect())
+                .map_err(|e| format!("{e}")),
+            OsProfile::MacOs => Err("not implemented for macOS".to_string()),
+        };
+        match rows {
+            Ok(rows) if !rows.is_empty() => render_process_table(&rows),
+            Ok(_) => format!(
+                "# pslist: 0 processes (walker returned empty)\n{}",
+                render_process_table(&[])
+            ),
+            Err(why) => format!("# pslist unavailable: {why}\n"),
+        }
+    }
+}
+
+impl From<memf_windows::WinProcessInfo> for ProcRow {
+    fn from(p: memf_windows::WinProcessInfo) -> Self {
+        Self {
+            pid: p.pid,
+            ppid: p.ppid,
+            name: p.image_name,
+            create_time: p.create_time,
+        }
+    }
+}
+
+impl From<memf_linux::ProcessInfo> for ProcRow {
+    fn from(p: memf_linux::ProcessInfo) -> Self {
+        Self {
+            pid: p.pid,
+            ppid: p.ppid,
+            name: p.comm,
+            create_time: p.start_time,
+        }
     }
 }
 
@@ -129,9 +170,14 @@ pub(crate) struct ProcRow {
 /// Render a pslist as a tab-separated table with a column header. An empty slice
 /// yields just the header line (the caller adds a diagnostic comment).
 pub(crate) fn render_process_table(rows: &[ProcRow]) -> String {
-    // RED stub — implemented in the GREEN step.
-    let _ = rows;
-    String::new()
+    let mut out = String::from("PID\tPPID\tCREATE_TIME\tNAME\n");
+    for r in rows {
+        out.push_str(&format!(
+            "{}\t{}\t{}\t{}\n",
+            r.pid, r.ppid, r.create_time, r.name
+        ));
+    }
+    out
 }
 
 impl<P: PhysicalMemoryProvider> ForensicFs for MemoryFs<P> {

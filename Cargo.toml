@@ -20,7 +20,7 @@ ntfs = ["dep:ntfs-core"]
 hfsplus = ["dep:hfsplus-forensic"]
 exfat = ["dep:exfat-fs"]
 apfs = ["dep:apfs-core"]
-memory = ["dep:memf-format", "dep:memf-core", "dep:memf-session", "dep:memf-symbols"]
+memory = ["dep:memf-format", "dep:memf-core", "dep:memf-session", "dep:memf-symbols", "dep:memf-windows", "dep:memf-linux"]
 tarball = ["dep:tar", "dep:flate2", "dep:bzip2"]
 zip = ["dep:zip"]
 sevenz = ["dep:sevenz-rust"]
@@ -39,6 +39,8 @@ memf-format = { version = "0.2", path = "../memory-forensic/crates/memf-format",
 memf-core = { version = "0.2", path = "../memory-forensic/crates/memf-core", optional = true }
 memf-session = { version = "0.2", path = "../memory-forensic/crates/memf-session", optional = true }
 memf-symbols = { version = "0.2", path = "../memory-forensic/crates/memf-symbols", optional = true }
+memf-windows = { version = "0.2", path = "../memory-forensic/crates/memf-windows", optional = true }
+memf-linux = { version = "0.2", path = "../memory-forensic/crates/memf-linux", optional = true }
 fuser = "0.15"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
