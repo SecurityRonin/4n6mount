@@ -9,6 +9,9 @@
 //! into the `memf-session` library crate so 4n6mount can drive it headlessly;
 //! later phases add the synthetic tree and lazy artifact rendering.
 
+pub mod inode;
+pub mod memoryfs;
+
 #[cfg(test)]
 mod smoke {
     /// Phase-1 Task 1.1 smoke test: the memf analysis library surface — the
