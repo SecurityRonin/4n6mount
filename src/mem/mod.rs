@@ -1,6 +1,6 @@
 #![forbid(unsafe_code)]
 
-//! Memory-dump mounting (the MemProcFS / MemNixFS paradigm): a second
+//! Memory-dump mounting (the `MemProcFS` / `MemNixFS` paradigm): a second
 //! `ForensicFs` provider backed by memf's analysis library, exposing a memory
 //! dump's `proc/`, `sys/`, and `forensic/` views as a browsable filesystem.
 //!

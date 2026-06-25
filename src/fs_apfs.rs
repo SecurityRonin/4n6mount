@@ -44,15 +44,15 @@ fn drec_file_type(flags: u16) -> FsFileType {
     }
 }
 
-/// Map a POSIX `mode` (S_IFMT bits) to a file type.
+/// Map a POSIX `mode` (`S_IFMT` bits) to a file type.
 fn mode_file_type(mode: u16) -> FsFileType {
-    match mode & 0o170000 {
-        0o040000 => FsFileType::Directory,
-        0o120000 => FsFileType::Symlink,
-        0o010000 => FsFileType::Fifo,
-        0o020000 => FsFileType::CharDevice,
-        0o060000 => FsFileType::BlockDevice,
-        0o140000 => FsFileType::Socket,
+    match mode & 0o170_000 {
+        0o040_000 => FsFileType::Directory,
+        0o120_000 => FsFileType::Symlink,
+        0o010_000 => FsFileType::Fifo,
+        0o020_000 => FsFileType::CharDevice,
+        0o060_000 => FsFileType::BlockDevice,
+        0o140_000 => FsFileType::Socket,
         _ => FsFileType::RegularFile,
     }
 }
