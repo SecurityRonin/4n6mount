@@ -5,8 +5,8 @@ use clap::Parser;
 #[derive(Parser)]
 #[command(
     name = "4n6mount",
-    about = "Universal forensic FUSE mount — auto-detects ext4, NTFS, exFAT, HFS+, \
-             ISO9660, EWF/VMDK containers, and zip/7z/tar.gz archives",
+    about = "Universal forensic FUSE mount — auto-detects ext4, NTFS, exFAT, HFS+, APFS, \
+             ISO9660, EWF/VMDK containers, and zip/7z/tar(.gz/.bz2) archives",
     version
 )]
 struct Cli {

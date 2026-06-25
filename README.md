@@ -120,11 +120,12 @@ the OS's own driver) — never a self-encoded round-trip.
 | **exFAT** | Supported | `exfat` (default) | macOS-minted volume, TSK oracle |
 | **HFS+ / HFSX** | Supported | `hfsplus` (default) | macOS-minted volume, TSK oracle |
 | **ISO 9660 / UDF** | Supported | `iso` (default) | Rock Ridge ISO |
-| APFS | Detected, not yet mountable | — | blocked on upstream `apfs-core` parser |
+| **APFS** | Supported (read-only) | `apfs` (default) | real APFS container carve, TSK `fls`/`istat` |
 
-APFS is recognized (NXSB superblock) but its parser is still a work in progress
-upstream; 4n6mount reports a clear unsupported error rather than mounting it
-incorrectly.
+APFS mounts the container's live volume (point-in-time view) via `apfs-core`.
+Encrypted (FileVault) APFS volumes are not yet supported — apfs-core's
+encryption path is still in progress, so a sealed/encrypted volume surfaces a
+clear error rather than wrong output.
 
 ### Archives
 
