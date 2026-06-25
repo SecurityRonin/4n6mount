@@ -395,6 +395,22 @@ fn fs_file_type_to_fuse(t: FsFileType) -> FileType {
     }
 }
 
+/// The entries shown at the FUSE mount root, per [`MountLayout`].
+///
+/// `DiskOverlay` lists the virtual directories (`ro/`, `rw/`, `deleted/`, …);
+/// `Raw` lists the underlying [`ForensicFs`] root's children directly (encoded
+/// into the `ro/` inode namespace so the existing sub-tree callbacks serve
+/// them), with no overlay directories. Returns `(fuse_ino, name, file_type)`;
+/// `.`/`..` are added by the caller.
+fn root_children(
+    layout: crate::MountLayout,
+    fs: &mut dyn ForensicFs,
+    root_ino: u64,
+) -> crate::FsResult<Vec<(u64, Vec<u8>, FileType)>> {
+    let _ = (layout, root_ino, fs.root_ino());
+    Ok(Vec::new()) // RED stub — implemented in the GREEN step.
+}
+
 impl Filesystem for ForensicFuseFs {
     fn lookup(&mut self, _req: &Request, parent: u64, name: &OsStr, reply: ReplyEntry) {
         let name_bytes = name.as_encoded_bytes();
@@ -2020,6 +2036,49 @@ mod tests {
     fn created_overlay_id_format() {
         assert_eq!(ForensicFuseFs::created_overlay_id(1), "new_1");
         assert_eq!(ForensicFuseFs::created_overlay_id(0), "new_0");
+    }
+
+    // -----------------------------------------------------------------------
+    // root_children — MountLayout decision (Humble Object)
+    // -----------------------------------------------------------------------
+
+    fn root_child_names(layout: crate::MountLayout) -> Vec<String> {
+        let mut fs = MockForensicFs;
+        let root = fs.root_ino();
+        root_children(layout, &mut fs, root)
+            .unwrap()
+            .iter()
+            .map(|(_, n, _)| String::from_utf8_lossy(n).to_string())
+            .collect()
+    }
+
+    #[test]
+    fn root_children_raw_lists_fs_tree_without_overlay() {
+        let names = root_child_names(crate::MountLayout::Raw);
+        assert!(names.contains(&"hello.txt".to_string()), "got {names:?}");
+        assert!(names.contains(&"subdir".to_string()), "got {names:?}");
+        assert!(
+            !names
+                .iter()
+                .any(|n| n == "rw" || n == "deleted" || n == "ro"),
+            "Raw root must have no overlay dirs: {names:?}"
+        );
+    }
+
+    #[test]
+    fn root_children_diskoverlay_lists_virtual_dirs() {
+        let names = root_child_names(crate::MountLayout::DiskOverlay);
+        for d in [
+            "ro",
+            "rw",
+            "deleted",
+            "journal",
+            "metadata",
+            "unallocated",
+            "session",
+        ] {
+            assert!(names.contains(&d.to_string()), "missing {d}: {names:?}");
+        }
     }
 
     // -----------------------------------------------------------------------

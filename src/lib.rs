@@ -49,6 +49,22 @@ pub use types::*;
 use std::io;
 use std::path::Path;
 
+/// How the FUSE mount renders a [`ForensicFs`].
+///
+/// `DiskOverlay` is the disk-image presentation: the mount root lists the
+/// `ro/ rw/ deleted/ …` virtual directories and the filesystem tree lives under
+/// `ro/`. `Raw` renders the `ForensicFs` tree directly at the mount root with no
+/// overlay — used for read-only memory mounts (and any provider that owns its
+/// own top level).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum MountLayout {
+    /// Disk-image overlay: `ro/`, `rw/`, `deleted/`, … virtual directories.
+    #[default]
+    DiskOverlay,
+    /// The `ForensicFs` tree rendered directly at the root, read-only.
+    Raw,
+}
+
 /// Mount options for the FUSE filesystem.
 ///
 /// Platform-agnostic configuration consumed by both the Unix (fuser)
@@ -57,6 +73,7 @@ pub struct MountOptions {
     pub read_only: bool,
     pub daemon: bool,
     pub fs_name: String,
+    pub layout: MountLayout,
 }
 
 impl Default for MountOptions {
@@ -65,6 +82,7 @@ impl Default for MountOptions {
             read_only: false,
             daemon: false,
             fs_name: "4n6mount".to_string(),
+            layout: MountLayout::DiskOverlay,
         }
     }
 }
@@ -178,9 +196,13 @@ pub fn build_filesystem<R: io::Read + io::Seek + Send + 'static>(
             fs_exfat::ExFatForensicFs::new(reader).map_err(bad)?,
         )),
         #[cfg(feature = "tarball")]
-        FsType::TarGz => Ok(Box::new(fs_tar::TarballForensicFs::from_gz(reader).map_err(bad)?)),
+        FsType::TarGz => Ok(Box::new(
+            fs_tar::TarballForensicFs::from_gz(reader).map_err(bad)?,
+        )),
         #[cfg(feature = "tarball")]
-        FsType::TarBz2 => Ok(Box::new(fs_tar::TarballForensicFs::from_bz2(reader).map_err(bad)?)),
+        FsType::TarBz2 => Ok(Box::new(
+            fs_tar::TarballForensicFs::from_bz2(reader).map_err(bad)?,
+        )),
         #[cfg(feature = "zip")]
         FsType::Zip => Ok(Box::new(fs_zip::ZipForensicFs::new(reader).map_err(bad)?)),
         #[cfg(feature = "sevenz")]

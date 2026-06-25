@@ -189,6 +189,7 @@ fn main() {
         read_only: session_mgr.is_none(),
         daemon: cli.daemon,
         fs_name: format!("4n6mount-{fs_type}"),
+        layout: forensic_mount::MountLayout::DiskOverlay,
     };
 
     eprintln!("Mounting {image} at {mountpoint}");

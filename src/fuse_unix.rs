@@ -75,6 +75,7 @@ mod tests {
             read_only: true,
             daemon: true,
             fs_name: "ext4fs".to_string(),
+            layout: crate::MountLayout::DiskOverlay,
         };
         assert!(opts.read_only);
         assert!(opts.daemon);
