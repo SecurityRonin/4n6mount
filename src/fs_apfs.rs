@@ -73,8 +73,34 @@ impl<R: Read + Seek> ApfsForensicFs<R> {
     /// [`FsError::Corrupt`] if the container/volume superblock is invalid or the
     /// container exposes no volumes.
     pub fn new(reader: R) -> Result<Self, FsError> {
-        let _ = (reader, ROOT_INO, SeekFrom::Start(0));
-        todo!("ApfsForensicFs::new")
+        let mut container =
+            ApfsContainer::open(reader).map_err(|e| FsError::Corrupt(format!("not APFS: {e}")))?;
+        let block_size = container.superblock().block_size as usize;
+        let addrs = container
+            .volume_superblock_addrs()
+            .map_err(|e| FsError::Corrupt(format!("APFS volume resolution failed: {e}")))?;
+        let first = *addrs
+            .first()
+            .ok_or_else(|| FsError::Corrupt("APFS container exposes no volumes".to_string()))?;
+
+        // Read the first volume superblock (APSB) at its physical block address.
+        let mut reader = container.into_reader();
+        let byte_off = first
+            .checked_mul(block_size as u64)
+            .ok_or_else(|| FsError::Corrupt("APFS volume offset overflow".to_string()))?;
+        reader
+            .seek(SeekFrom::Start(byte_off))
+            .map_err(FsError::Io)?;
+        let mut block = vec![0u8; block_size];
+        reader.read_exact(&mut block).map_err(FsError::Io)?;
+        let volume = ApfsVolume::parse(&block)
+            .map_err(|e| FsError::Corrupt(format!("APFS volume superblock: {e}")))?;
+
+        Ok(Self {
+            reader,
+            volume,
+            block_size,
+        })
     }
 }
 
