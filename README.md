@@ -2,7 +2,7 @@
 
 **Mount forensic images as a filesystem. Browse evidence like files. Write without touching the original.**
 
-One command turns a forensic disk image into a mounted filesystem with read-only evidence access, a writable copy-on-write overlay, deleted file recovery, forensic timelines, and hash-based filtering — all without modifying a single byte of the original image.
+One command turns a forensic disk image — or an archive, or a **memory dump** — into a mounted filesystem with read-only evidence access, a writable copy-on-write overlay, deleted file recovery, forensic timelines, and hash-based filtering, all without modifying a single byte of the original. Disk filesystems (ext4, NTFS, exFAT, HFS+, APFS, ISO9660), EWF/VMDK containers, zip/7z/tar archives, and memory dumps all mount through one command.
 
 ## Why this exists
 
@@ -21,8 +21,9 @@ Forensic examiners spend too much time on tooling friction:
 # Mount an ext4 image
 4n6mount image.dd /mnt/evidence
 
-# Auto-detects the format (ext4 / NTFS / exFAT / HFS+ / ISO9660,
-# EWF/VMDK containers, and zip / 7z / tar.gz archives)
+# Auto-detects the format: filesystems (ext4 / NTFS / exFAT / HFS+ / APFS /
+# ISO9660), EWF & VMDK containers, zip / 7z / tar.gz / tar.bz2 archives, and
+# memory dumps (LiME / AVML / ELF-core / Windows crash dump)
 # Creates virtual directories:
 ls /mnt/evidence/
 #   ro/          - read-only pristine evidence
@@ -135,13 +136,42 @@ Archives mount as a browsable read-only tree (their entries become files).
 |---------|--------|-------------|-------------------|
 | **zip** | Supported | `zip` (default) | real `zip`-tool output |
 | **7-Zip (.7z)** | Supported | `sevenz` (default) | real `7z`-tool output |
-| **tar.gz / .tgz** | Supported | `targz` (default) | real `tar`-tool output |
+| **tar.gz / .tgz** | Supported | `tarball` (default) | real `tar`-tool output |
+| **tar.bz2 / .tbz2** | Supported | `tarball` (default) | real `tar -j` output |
 
 ### Containers
 
 `EWF` (`.E01`) and `VMDK` images are opened transparently and their **inner**
-filesystem (ext4 / NTFS / exFAT / HFS+ / ISO) is detected and mounted; an
+filesystem (ext4 / NTFS / exFAT / HFS+ / APFS / ISO) is detected and mounted; an
 unrecognized inner volume falls back to a single raw file.
+
+### Memory dumps
+
+Point a memory dump at a mountpoint and browse it as a filesystem — the
+MemProcFS / MemNixFS paradigm, backed by the [memf](https://github.com/SecurityRonin/memory-forensic)
+analysis library. The dump mounts read-only with a `sys/ proc/ forensic/ mem/`
+layout (no disk overlay); each artifact is rendered lazily from a memf walker.
+
+```bash
+4n6mount memory.lime /mnt/case --features memory
+cat /mnt/case/sys/os-info.txt        # OS, DTB/CR3, kernel symbols
+cat /mnt/case/sys/processes.txt      # pslist
+cat /mnt/case/sys/network.txt        # connections (netscan)
+```
+
+| Format | Detection | Feature flag |
+|--------|-----------|-------------|
+| **LiME** | `EMiL` magic | `memory` |
+| **AVML** | `AVML` magic | `memory` |
+| **ELF core dump** | ELF + `ET_CORE` | `memory` |
+| **Windows crash dump** | `PAGEDU64` magic | `memory` |
+| raw / headerless | `--fs memory` | `memory` |
+
+Working `sys/` artifacts: `os-info`, `processes`, `modules`, `network`
+(Linux + Windows), `dmesg` (Linux). A walker that finds nothing after a valid
+bootstrap yields an empty file with a one-line diagnostic — never a silent
+empty or a fabricated result. Per-process `proc/<pid>/`, `forensic/`, and raw
+`mem/` views are in progress. The `memory` feature is opt-in (not default).
 
 ## Platform support
 
@@ -194,16 +224,19 @@ You get ro/, rw/, deleted/, journal/, metadata/, session management, and evidenc
 
 ## Test coverage
 
-- **96 tests** across library modules (FUSE callbacks, inode mapping, session, filter, detect, ext4 impl)
-- Mock-based FUSE testing with `MockForensicFs`
-- CLI parsing tests for all argument combinations
+- **191 library tests** (216 with the `memory` feature) across FUSE callbacks, inode mapping, session, filter, format detection, and every filesystem/archive/memory backend
+- Each format validated against **real-world data with an independent oracle** (The Sleuth Kit, the OS's own driver, or Volatility) — not a self-encoded round-trip
+- Mock-based FUSE testing with `MockForensicFs`; CLI parsing tests for all argument combinations
 
 ## Part of the SecurityRonin forensic suite
 
 | Tool | Purpose |
 |------|---------|
-| [**ext4fs-forensic**](https://github.com/SecurityRonin/ext4fs-forensic) | ext4 filesystem parser with 12 forensic capabilities |
+| [**ext4fs-forensic**](https://github.com/SecurityRonin/ext4fs-forensic) | ext4 filesystem parser with forensic capabilities |
+| [**ntfs-forensic**](https://github.com/SecurityRonin/ntfs-forensic) | NTFS parser (MFT, `$DATA`, ADS, LZNT1) |
+| [**apfs-forensic**](https://github.com/SecurityRonin/apfs-forensic) | APFS container + volume reader |
 | [**ewf**](https://github.com/SecurityRonin/ewf) | E01/EWF forensic disk image reader |
+| [**memory-forensic** (memf)](https://github.com/SecurityRonin/memory-forensic) | Memory-dump analysis (Volatility-parity walkers) |
 | [**blazehash**](https://github.com/SecurityRonin/blazehash) | Forensic file hasher — hashdeep for the modern era |
 | **4n6mount** | Universal forensic FUSE mount (this crate) |
 
