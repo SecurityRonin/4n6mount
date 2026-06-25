@@ -8,6 +8,8 @@
 //! held now (unused until the Phase 2 walkers) so the type and its mount wiring
 //! are stable.
 
+use std::fmt::Write as _;
+
 use memf_core::object_reader::ObjectReader;
 use memf_core::vas::{TranslationMode, VirtualAddressSpace};
 use memf_format::PhysicalMemoryProvider;
@@ -178,11 +180,27 @@ impl<P: PhysicalMemoryProvider> MemoryFs<P> {
                 }
                 Err(e) => Err(format!("{e}")),
             },
-            OsProfile::Windows => Err(
-                "Windows TCP partition-table VA not resolved by the current memf \
-                 bootstrap (network walk needs a memf-side head, like pslist's)"
-                    .to_string(),
-            ),
+            OsProfile::Windows => {
+                // Symbol-free pool-tag scan (Volatility netscan parity): TCP
+                // endpoints + listeners + UDP. No partition-table head needed.
+                let mut out = Vec::new();
+                let mut err: Option<String> = None;
+                for scan in [
+                    memf_windows::network::scan_tcp_endpoints
+                        as fn(&_) -> memf_windows::Result<Vec<memf_windows::WinConnectionInfo>>,
+                    memf_windows::network::scan_tcp_listeners,
+                    memf_windows::network::scan_udp_endpoints,
+                ] {
+                    match scan(&self.reader) {
+                        Ok(c) => out.extend(c.into_iter().map(NetRow::from)),
+                        Err(e) => err = Some(format!("{e}")),
+                    }
+                }
+                match err {
+                    Some(e) if out.is_empty() => Err(e),
+                    _ => Ok(out),
+                }
+            }
             OsProfile::MacOs => Err("not implemented for macOS".to_string()),
         };
         match rows {
@@ -225,6 +243,18 @@ impl From<memf_linux::ConnectionInfo> for NetRow {
             remote: format!("{}:{}", c.remote_addr, c.remote_port),
             state: c.state.to_string(),
             pid: c.pid.map(|p| p.to_string()).unwrap_or_default(),
+        }
+    }
+}
+
+impl From<memf_windows::WinConnectionInfo> for NetRow {
+    fn from(c: memf_windows::WinConnectionInfo) -> Self {
+        Self {
+            protocol: c.protocol,
+            local: format!("{}:{}", c.local_addr, c.local_port),
+            remote: format!("{}:{}", c.remote_addr, c.remote_port),
+            state: c.state.to_string(),
+            pid: c.pid.to_string(),
         }
     }
 }
@@ -289,10 +319,11 @@ pub(crate) struct ProcRow {
 pub(crate) fn render_process_table(rows: &[ProcRow]) -> String {
     let mut out = String::from("PID\tPPID\tCREATE_TIME\tNAME\n");
     for r in rows {
-        out.push_str(&format!(
-            "{}\t{}\t{}\t{}\n",
+        let _ = writeln!(
+            out,
+            "{}\t{}\t{}\t{}",
             r.pid, r.ppid, r.create_time, r.name
-        ));
+        );
     }
     out
 }
@@ -312,10 +343,11 @@ pub(crate) struct ModRow {
 pub(crate) fn render_module_table(rows: &[ModRow]) -> String {
     let mut out = String::from("NAME\tBASE\tSIZE\tPATH\n");
     for r in rows {
-        out.push_str(&format!(
-            "{}\t{:#x}\t{}\t{}\n",
+        let _ = writeln!(
+            out,
+            "{}\t{:#x}\t{}\t{}",
             r.name, r.base_addr, r.size, r.path
-        ));
+        );
     }
     out
 }
@@ -335,10 +367,11 @@ pub(crate) struct NetRow {
 pub(crate) fn render_net_table(rows: &[NetRow]) -> String {
     let mut out = String::from("PROTO\tLOCAL\tREMOTE\tSTATE\tPID\n");
     for r in rows {
-        out.push_str(&format!(
-            "{}\t{}\t{}\t{}\t{}\n",
+        let _ = writeln!(
+            out,
+            "{}\t{}\t{}\t{}\t{}",
             r.protocol, r.local, r.remote, r.state, r.pid
-        ));
+        );
     }
     out
 }
@@ -347,7 +380,7 @@ pub(crate) fn render_net_table(rows: &[NetRow]) -> String {
 pub(crate) fn render_dmesg(entries: &[(u64, String)]) -> String {
     let mut out = String::new();
     for (ts, msg) in entries {
-        out.push_str(&format!("[{ts}] {msg}\n"));
+        let _ = writeln!(out, "[{ts}] {msg}");
     }
     out
 }
