@@ -20,7 +20,8 @@ use windows_sys::Win32::Storage::FileSystem::{
     FILE_ACCESS_RIGHTS, FILE_ATTRIBUTE_DIRECTORY, FILE_ATTRIBUTE_NORMAL, FILE_FLAGS_AND_ATTRIBUTES,
 };
 use winfsp::filesystem::{
-    DirInfo, DirMarker, FileInfo, FileSecurity, FileSystemContext, OpenFileInfo, VolumeInfo,
+    DirBuffer, DirInfo, DirMarker, FileInfo, FileSecurity, FileSystemContext, OpenFileInfo,
+    VolumeInfo, WideNameInfo,
 };
 use winfsp::host::{FileSystemHost, VolumeParams};
 use winfsp::winfsp_init_or_die;
@@ -107,9 +108,16 @@ impl WinForensicFs {
     }
 }
 
+/// WinFsp per-handle file context: the resolved inode plus a directory buffer.
+/// WinFsp's model fills the buffer once (the initial, marker-less `read_directory`
+/// call) and re-reads it for subsequent paginated calls.
+pub struct WinFile {
+    ino: u64,
+    dir_buffer: DirBuffer,
+}
+
 impl FileSystemContext for WinForensicFs {
-    /// The file context is the `ForensicFs` inode.
-    type FileContext = u64;
+    type FileContext = WinFile;
 
     fn get_security_by_name(
         &self,
@@ -139,7 +147,10 @@ impl FileSystemContext for WinForensicFs {
     ) -> Result<Self::FileContext, FspError> {
         let ino = self.resolve(file_name).ok_or_else(not_found)?;
         self.fill(ino, file_info.as_mut())?;
-        Ok(ino)
+        Ok(WinFile {
+            ino,
+            dir_buffer: DirBuffer::default(),
+        })
     }
 
     fn close(&self, _context: Self::FileContext) {}
@@ -149,7 +160,7 @@ impl FileSystemContext for WinForensicFs {
         context: &Self::FileContext,
         file_info: &mut FileInfo,
     ) -> Result<(), FspError> {
-        self.fill(*context, file_info)
+        self.fill(context.ino, file_info)
     }
 
     fn read(
@@ -160,7 +171,7 @@ impl FileSystemContext for WinForensicFs {
     ) -> Result<u32, FspError> {
         let data = {
             let mut fs = self.fs.lock().map_err(|_| io_error())?;
-            fs.read_file_range(*context, offset, buffer.len() as u64)
+            fs.read_file_range(context.ino, offset, buffer.len() as u64)
                 .map_err(|_| io_error())?
         };
         let n = data.len().min(buffer.len());
@@ -175,45 +186,31 @@ impl FileSystemContext for WinForensicFs {
         marker: DirMarker,
         buffer: &mut [u8],
     ) -> Result<u32, FspError> {
-        // Snapshot the directory's children (name, inode), sorted by name for a
-        // stable order across resumed (marker-based) calls.
-        let mut entries: Vec<(String, u64)> = {
-            let mut fs = self.fs.lock().map_err(|_| io_error())?;
-            fs.read_dir(*context)
-                .map_err(|_| io_error())?
-                .into_iter()
-                .filter(|e| e.name != b"." && e.name != b"..")
-                .map(|e| (String::from_utf8_lossy(&e.name).into_owned(), e.inode))
-                .collect()
-        };
-        entries.sort_by(|a, b| a.0.cmp(&b.0));
-
-        // Resume after the marker (WinFsp re-calls with the last name once the
-        // buffer fills); skip everything up to and including it.
-        let marker_name = marker.inner_as_cstr().map(U16CStr::to_string_lossy);
-        let start = match &marker_name {
-            Some(m) => entries
-                .iter()
-                .position(|(n, _)| n > m)
-                .unwrap_or(entries.len()),
-            None => 0,
-        };
-
-        let mut cursor = 0u32;
-        let mut dir_info: DirInfo<255> = DirInfo::new();
-        for (name, ino) in &entries[start..] {
-            dir_info.reset();
-            if self.fill(*ino, dir_info.file_info_mut()).is_err() {
-                continue;
-            }
-            let name_u16: Vec<u16> = name.encode_utf16().collect();
-            dir_info.set_name_raw(&name_u16)?;
-            if !dir_info.append_to_buffer(buffer, &mut cursor) {
-                return Ok(cursor);
+        // Populate the per-handle directory buffer once (on the initial,
+        // marker-less call — `acquire(reset, _)` returns Ok only when a fill is
+        // needed); WinFsp re-reads the buffer for subsequent paginated calls.
+        if let Ok(lock) = context.dir_buffer.acquire(marker.is_none(), None) {
+            let mut entries: Vec<(String, u64)> = {
+                let mut fs = self.fs.lock().map_err(|_| io_error())?;
+                fs.read_dir(context.ino)
+                    .map_err(|_| io_error())?
+                    .into_iter()
+                    .filter(|e| e.name != b"." && e.name != b"..")
+                    .map(|e| (String::from_utf8_lossy(&e.name).into_owned(), e.inode))
+                    .collect()
+            };
+            // Stable order for deterministic, resumable listing.
+            entries.sort_by(|a, b| a.0.cmp(&b.0));
+            for (name, ino) in entries {
+                let mut dir_info: DirInfo<255> = DirInfo::new();
+                if self.fill(ino, dir_info.file_info_mut()).is_err() {
+                    continue;
+                }
+                dir_info.set_name(name.as_str())?;
+                lock.write(&mut dir_info)?;
             }
         }
-        DirInfo::<255>::finalize_buffer(buffer, &mut cursor);
-        Ok(cursor)
+        Ok(context.dir_buffer.read(marker, buffer))
     }
 
     fn get_volume_info(&self, out: &mut VolumeInfo) -> Result<(), FspError> {
