@@ -224,6 +224,29 @@ pub fn build_filesystem<R: io::Read + io::Seek + Send + 'static>(
     }
 }
 
+/// Open a memory dump and build a [`MemoryFs`] over it, bootstrapping the
+/// analysis context (OS, DTB/CR3, kernel list-heads) via `memf-session`.
+///
+/// `symbols` is an optional ISF/PDB path. A header-bearing Windows crash dump
+/// bootstraps with an empty resolver; raw `.mem` and Linux dumps need symbols.
+///
+/// Fails LOUD on a bootstrap failure (bad dump, undetectable OS, missing
+/// symbols) rather than mounting an empty tree — the memory mount is meaningless
+/// without a valid context.
+///
+/// # Errors
+///
+/// Propagates dump-open, symbol-load, and analysis-bootstrap failures as
+/// `InvalidData`.
+#[cfg(feature = "memory")]
+pub fn build_memory_fs(
+    image: &Path,
+    symbols: Option<&Path>,
+) -> io::Result<Box<dyn ForensicFs + Send>> {
+    let _ = (image, symbols);
+    todo!("build_memory_fs")
+}
+
 /// Mount a forensic filesystem via FUSE (or `WinFSP` on Windows).
 ///
 /// This is the main entry point for consumers.  Pass a `ForensicFs`
@@ -316,5 +339,32 @@ mod dispatch_tests {
         };
         let fs = build_filesystem(Cursor::new(data), detect::FsType::ExFat, "x").unwrap();
         assert_eq!(fs.fs_info().unwrap()["type"], "exfat");
+    }
+}
+
+#[cfg(all(test, feature = "memory"))]
+mod memory_tests {
+    use super::*;
+
+    /// build_memory_fs bootstraps a synthetic Windows crash dump (header carries
+    /// CR3 + machine type, so no symbols are required) and renders sys/os-info.
+    #[test]
+    fn build_memory_fs_bootstraps_crashdump() {
+        use memf_format::test_builders::CrashDumpBuilder;
+        let bytes = CrashDumpBuilder::new().cr3(0x1ab000).build();
+
+        let dir = std::env::temp_dir().join(format!("4n6mem_{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("crash.dmp");
+        std::fs::write(&path, &bytes).unwrap();
+
+        let mut fs = build_memory_fs(&path, None).expect("crash dump must bootstrap");
+        // Root is the Raw memory tree: sys/ present, os-info.txt renders the OS.
+        let sys = fs.lookup(mem::inode::ROOT_INO, b"sys").unwrap().expect("sys");
+        let oi = fs.lookup(sys, b"os-info.txt").unwrap().expect("os-info.txt");
+        let text = String::from_utf8(fs.read_file(oi).unwrap()).unwrap();
+        assert!(text.contains("OS: Windows"), "got: {text}");
+
+        std::fs::remove_dir_all(&dir).ok();
     }
 }
