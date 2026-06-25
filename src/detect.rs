@@ -8,9 +8,15 @@ pub enum FsType {
     Ext4,
     Ntfs,
     ExFat,
+    Hfsplus,
+    Apfs,
     Ewf,
     Iso,
     Vmdk,
+    Zip,
+    SevenZ,
+    TarGz,
+    TarBz2,
     Unknown,
 }
 
@@ -20,9 +26,15 @@ impl std::fmt::Display for FsType {
             FsType::Ext4 => write!(f, "ext4"),
             FsType::Ntfs => write!(f, "ntfs"),
             FsType::ExFat => write!(f, "exfat"),
+            FsType::Hfsplus => write!(f, "hfsplus"),
+            FsType::Apfs => write!(f, "apfs"),
             FsType::Ewf => write!(f, "ewf"),
             FsType::Iso => write!(f, "iso9660"),
             FsType::Vmdk => write!(f, "vmdk"),
+            FsType::Zip => write!(f, "zip"),
+            FsType::SevenZ => write!(f, "7z"),
+            FsType::TarGz => write!(f, "tar.gz"),
+            FsType::TarBz2 => write!(f, "tar.bz2"),
             FsType::Unknown => write!(f, "unknown"),
         }
     }
@@ -35,8 +47,14 @@ impl std::str::FromStr for FsType {
             "ext4" => Ok(FsType::Ext4),
             "ntfs" => Ok(FsType::Ntfs),
             "exfat" => Ok(FsType::ExFat),
+            "hfsplus" | "hfs+" | "hfsx" => Ok(FsType::Hfsplus),
+            "apfs" => Ok(FsType::Apfs),
             "ewf" | "e01" => Ok(FsType::Ewf),
             "iso" | "iso9660" | "cd" | "udf" => Ok(FsType::Iso),
+            "zip" => Ok(FsType::Zip),
+            "7z" | "sevenz" | "7zip" => Ok(FsType::SevenZ),
+            "targz" | "tar.gz" | "tgz" | "gz" | "gzip" => Ok(FsType::TarGz),
+            "tarbz2" | "tar.bz2" | "tbz2" | "tbz" | "bz2" | "bzip2" => Ok(FsType::TarBz2),
             _ => Err(format!("unknown filesystem type: {s}")),
         }
     }
@@ -44,7 +62,8 @@ impl std::str::FromStr for FsType {
 
 /// Auto-detect filesystem type from a Read+Seek source.
 ///
-/// Checks magic numbers for ext4, NTFS, and exFAT. Returns `FsType::Unknown`
+/// Checks magic numbers for ext4, NTFS, exFAT, HFS+, APFS, ISO9660, the EWF and
+/// VMDK containers, and the zip/7z/gzip archive formats. Returns `FsType::Unknown`
 /// if no known signature matches. The seek position is reset to 0 after detection.
 pub fn detect_filesystem<R: Read + Seek>(source: &mut R) -> io::Result<FsType> {
     // Seek to start
@@ -73,6 +92,34 @@ pub fn detect_filesystem<R: Read + Seek>(source: &mut R) -> io::Result<FsType> {
         return Ok(FsType::Vmdk);
     }
 
+    // Check archives by their byte-0 signatures. These are terminal containers
+    // that expose a file tree directly (no inner filesystem to recurse into).
+    //   gzip: 1f 8b  (a .tar.gz / .tgz; a bare .gz is decoded as a 1-file tar)
+    //   zip : "PK\x03\x04" (local file header) or "PK\x05\x06" (empty archive)
+    //   7z  : 37 7a bc af 27 1c
+    if bytes_read >= 2 && buf[0] == 0x1F && buf[1] == 0x8B {
+        return Ok(FsType::TarGz);
+    }
+    // bzip2: "BZh" (a .tar.bz2 / .tbz2; a bare .bz2 is decoded as a 1-file tar)
+    if bytes_read >= 3 && &buf[0..3] == b"BZh" {
+        return Ok(FsType::TarBz2);
+    }
+    if bytes_read >= 4
+        && buf[0..2] == [0x50, 0x4B]
+        && matches!(buf[2..4], [0x03, 0x04] | [0x05, 0x06] | [0x07, 0x08])
+    {
+        return Ok(FsType::Zip);
+    }
+    if bytes_read >= 6 && buf[0..6] == [0x37, 0x7A, 0xBC, 0xAF, 0x27, 0x1C] {
+        return Ok(FsType::SevenZ);
+    }
+
+    // Check APFS: container superblock magic "NXSB" at byte 32 (after the
+    // 32-byte obj_phys_t object header of block 0).
+    if bytes_read >= 36 && &buf[32..36] == b"NXSB" {
+        return Ok(FsType::Apfs);
+    }
+
     // Check NTFS: "NTFS" at byte 3
     if bytes_read >= 7 && &buf[3..7] == b"NTFS" {
         return Ok(FsType::Ntfs);
@@ -81,6 +128,12 @@ pub fn detect_filesystem<R: Read + Seek>(source: &mut R) -> io::Result<FsType> {
     // Check exFAT: "EXFAT" at byte 3
     if bytes_read >= 8 && &buf[3..8] == b"EXFAT" {
         return Ok(FsType::ExFat);
+    }
+
+    // Check HFS+/HFSX: volume header at byte 1024; signature "H+" (0x482B) for
+    // HFS+, "HX" (0x4858) for the case-sensitive HFSX variant.
+    if bytes_read >= 1026 && buf[1024] == 0x48 && (buf[1025] == 0x2B || buf[1025] == 0x58) {
+        return Ok(FsType::Hfsplus);
     }
 
     // Check ext4: magic 0xEF53 at byte 1080 (little-endian)
@@ -102,6 +155,65 @@ pub fn detect_filesystem<R: Read + Seek>(source: &mut R) -> io::Result<FsType> {
     }
 
     Ok(FsType::Unknown)
+}
+
+/// A recognized memory-dump container format. These route to the memory mount
+/// path (a `MemoryFs` over memf), not the disk-filesystem dispatch.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MemDumpFormat {
+    /// `LiME` (Linux Memory Extractor) — magic `EMiL`.
+    Lime,
+    /// AVML (Acquisition of Volatile Memory for Linux) v2 — magic `AVML`.
+    Avml,
+    /// ELF core dump (`ET_CORE`).
+    ElfCore,
+    /// Windows kernel crash dump (64-bit) — magic `PAGEDU64`.
+    WinCrashDump,
+}
+
+impl std::fmt::Display for MemDumpFormat {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            MemDumpFormat::Lime => write!(f, "lime"),
+            MemDumpFormat::Avml => write!(f, "avml"),
+            MemDumpFormat::ElfCore => write!(f, "elf-core"),
+            MemDumpFormat::WinCrashDump => write!(f, "win-crashdump"),
+        }
+    }
+}
+
+/// Detect a memory-dump container by its header magic.
+///
+/// Returns `Ok(None)` for non-dumps — including raw/headerless dumps, which
+/// carry no signature and must be selected explicitly (`--fs memory`). The seek
+/// position is reset to 0. Magics mirror `memf-format`'s plugins (`LiME`
+/// `0x4C694D45`, AVML `0x4C4D5641`, ELF `ET_CORE`, crash `PAGE` + `DU64`).
+pub fn detect_memory_dump<R: Read + Seek>(source: &mut R) -> io::Result<Option<MemDumpFormat>> {
+    source.seek(SeekFrom::Start(0))?;
+    let mut buf = [0u8; 18];
+    let n = read_fill(source, &mut buf);
+    source.seek(SeekFrom::Start(0))?;
+
+    // LiME header: magic 0x4C694D45 ("EMiL" little-endian) at byte 0.
+    if n >= 4 && &buf[0..4] == b"EMiL" {
+        return Ok(Some(MemDumpFormat::Lime));
+    }
+    // AVML v2: magic 0x4C4D5641 ("AVML" little-endian) at byte 0.
+    if n >= 4 && &buf[0..4] == b"AVML" {
+        return Ok(Some(MemDumpFormat::Avml));
+    }
+    // Windows kernel crash dump (64-bit): "PAGE" + "DU64" = "PAGEDU64" at byte 0.
+    if n >= 8 && &buf[0..8] == b"PAGEDU64" {
+        return Ok(Some(MemDumpFormat::WinCrashDump));
+    }
+    // ELF core dump: ELF magic at byte 0 and e_type == ET_CORE (4) at byte 16.
+    if n >= 18 && buf[0..4] == [0x7F, b'E', b'L', b'F'] {
+        let e_type = u16::from_le_bytes([buf[16], buf[17]]);
+        if e_type == 4 {
+            return Ok(Some(MemDumpFormat::ElfCore));
+        }
+    }
+    Ok(None)
 }
 
 /// Read as many bytes as possible into `buf`, returning total bytes read.
@@ -280,5 +392,164 @@ mod tests {
         assert_eq!(detect_filesystem(&mut cursor).unwrap(), FsType::Ext4);
         // Seek position should be reset to 0 after detection
         assert_eq!(cursor.stream_position().unwrap(), 0);
+    }
+
+    #[test]
+    fn detect_gzip_as_targz() {
+        // gzip magic 1f 8b at byte 0.
+        let mut data = vec![0u8; 64];
+        data[0] = 0x1F;
+        data[1] = 0x8B;
+        data[2] = 0x08; // deflate
+        assert_eq!(
+            detect_filesystem(&mut Cursor::new(data)).unwrap(),
+            FsType::TarGz
+        );
+    }
+
+    #[test]
+    fn detect_mem_lime() {
+        let mut data = vec![0u8; 64];
+        data[0..4].copy_from_slice(b"EMiL"); // LIME_MAGIC 0x4C694D45 little-endian
+        assert_eq!(
+            detect_memory_dump(&mut Cursor::new(data)).unwrap(),
+            Some(MemDumpFormat::Lime)
+        );
+    }
+
+    #[test]
+    fn detect_mem_avml() {
+        let mut data = vec![0u8; 64];
+        data[0..4].copy_from_slice(b"AVML");
+        assert_eq!(
+            detect_memory_dump(&mut Cursor::new(data)).unwrap(),
+            Some(MemDumpFormat::Avml)
+        );
+    }
+
+    #[test]
+    fn detect_mem_elf_core() {
+        let mut data = vec![0u8; 64];
+        data[0..4].copy_from_slice(&[0x7F, b'E', b'L', b'F']);
+        data[16..18].copy_from_slice(&4u16.to_le_bytes()); // e_type = ET_CORE
+        assert_eq!(
+            detect_memory_dump(&mut Cursor::new(data)).unwrap(),
+            Some(MemDumpFormat::ElfCore)
+        );
+    }
+
+    #[test]
+    fn detect_mem_elf_exec_is_not_a_dump() {
+        // A normal ELF executable (ET_EXEC) is not a core dump.
+        let mut data = vec![0u8; 64];
+        data[0..4].copy_from_slice(&[0x7F, b'E', b'L', b'F']);
+        data[16..18].copy_from_slice(&2u16.to_le_bytes()); // ET_EXEC
+        assert_eq!(detect_memory_dump(&mut Cursor::new(data)).unwrap(), None);
+    }
+
+    #[test]
+    fn detect_mem_win_crashdump() {
+        let mut data = vec![0u8; 64];
+        data[0..8].copy_from_slice(b"PAGEDU64");
+        assert_eq!(
+            detect_memory_dump(&mut Cursor::new(data)).unwrap(),
+            Some(MemDumpFormat::WinCrashDump)
+        );
+    }
+
+    #[test]
+    fn detect_mem_none_for_non_dump() {
+        let mut data = vec![0u8; 64];
+        assert_eq!(detect_memory_dump(&mut Cursor::new(data)).unwrap(), None);
+    }
+
+    #[test]
+    fn detect_bzip2_as_tarbz2() {
+        // bzip2 magic "BZh" (0x42 0x5A 0x68) at byte 0.
+        let mut data = vec![0u8; 64];
+        data[0..3].copy_from_slice(b"BZh");
+        data[3] = b'9'; // block-size digit
+        assert_eq!(
+            detect_filesystem(&mut Cursor::new(data)).unwrap(),
+            FsType::TarBz2
+        );
+    }
+
+    #[test]
+    fn detect_zip_local_file_header() {
+        let mut data = vec![0u8; 64];
+        data[0..4].copy_from_slice(b"PK\x03\x04");
+        assert_eq!(
+            detect_filesystem(&mut Cursor::new(data)).unwrap(),
+            FsType::Zip
+        );
+    }
+
+    #[test]
+    fn detect_zip_empty_archive() {
+        // An empty zip is just the end-of-central-directory record: PK\x05\x06.
+        let mut data = vec![0u8; 64];
+        data[0..4].copy_from_slice(b"PK\x05\x06");
+        assert_eq!(
+            detect_filesystem(&mut Cursor::new(data)).unwrap(),
+            FsType::Zip
+        );
+    }
+
+    #[test]
+    fn detect_7z_signature() {
+        let mut data = vec![0u8; 64];
+        data[0..6].copy_from_slice(&[0x37, 0x7A, 0xBC, 0xAF, 0x27, 0x1C]);
+        assert_eq!(
+            detect_filesystem(&mut Cursor::new(data)).unwrap(),
+            FsType::SevenZ
+        );
+    }
+
+    #[test]
+    fn detect_hfsplus_signature() {
+        // HFS+ volume header at byte 1024; signature "H+" (0x482B).
+        let mut data = vec![0u8; 2048];
+        data[1024] = 0x48; // 'H'
+        data[1025] = 0x2B; // '+'
+        assert_eq!(
+            detect_filesystem(&mut Cursor::new(data)).unwrap(),
+            FsType::Hfsplus
+        );
+    }
+
+    #[test]
+    fn detect_hfsx_signature() {
+        // HFSX (case-sensitive) uses "HX" (0x4858) at the same offset.
+        let mut data = vec![0u8; 2048];
+        data[1024] = 0x48; // 'H'
+        data[1025] = 0x58; // 'X'
+        assert_eq!(
+            detect_filesystem(&mut Cursor::new(data)).unwrap(),
+            FsType::Hfsplus
+        );
+    }
+
+    #[test]
+    fn detect_apfs_nxsb() {
+        // APFS container superblock: 32-byte obj header, then magic "NXSB".
+        let mut data = vec![0u8; 4096];
+        data[32..36].copy_from_slice(b"NXSB");
+        assert_eq!(
+            detect_filesystem(&mut Cursor::new(data)).unwrap(),
+            FsType::Apfs
+        );
+    }
+
+    #[test]
+    fn new_fstypes_parse_and_display() {
+        assert_eq!("hfsplus".parse::<FsType>().unwrap(), FsType::Hfsplus);
+        assert_eq!("apfs".parse::<FsType>().unwrap(), FsType::Apfs);
+        assert_eq!("zip".parse::<FsType>().unwrap(), FsType::Zip);
+        assert_eq!("7z".parse::<FsType>().unwrap(), FsType::SevenZ);
+        assert_eq!("tar.gz".parse::<FsType>().unwrap(), FsType::TarGz);
+        assert_eq!(FsType::Hfsplus.to_string(), "hfsplus");
+        assert_eq!(FsType::SevenZ.to_string(), "7z");
+        assert_eq!(FsType::TarGz.to_string(), "tar.gz");
     }
 }

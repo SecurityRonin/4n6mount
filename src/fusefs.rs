@@ -73,10 +73,16 @@ pub struct ForensicFuseFs {
     metadata_cache: RefCell<Option<MetadataCache>>,
     /// Lazy-loaded cache for the unallocated/ virtual directory.
     unallocated_cache: RefCell<Option<Vec<UnallocatedEntry>>>,
+    /// How the root is rendered: disk overlay (`ro/ rw/ …`) or raw tree.
+    layout: crate::MountLayout,
 }
 
 impl ForensicFuseFs {
-    pub fn new(fs: Box<dyn ForensicFs + Send>, session: Option<Session>) -> Self {
+    pub fn new(
+        fs: Box<dyn ForensicFs + Send>,
+        session: Option<Session>,
+        layout: crate::MountLayout,
+    ) -> Self {
         let root_ino = fs.root_ino();
         Self {
             fs: RefCell::new(fs),
@@ -87,6 +93,7 @@ impl ForensicFuseFs {
             journal_cache: RefCell::new(None),
             metadata_cache: RefCell::new(None),
             unallocated_cache: RefCell::new(None),
+            layout,
         }
     }
 
@@ -395,12 +402,45 @@ fn fs_file_type_to_fuse(t: FsFileType) -> FileType {
     }
 }
 
+/// The entries shown at the FUSE mount root, per [`MountLayout`].
+///
+/// `DiskOverlay` lists the virtual directories (`ro/`, `rw/`, `deleted/`, …);
+/// `Raw` lists the underlying [`ForensicFs`] root's children directly (encoded
+/// into the `ro/` inode namespace so the existing sub-tree callbacks serve
+/// them), with no overlay directories. Returns `(fuse_ino, name, file_type)`;
+/// `.`/`..` are added by the caller.
+fn root_children(
+    layout: crate::MountLayout,
+    fs: &mut dyn ForensicFs,
+    root_ino: u64,
+) -> crate::FsResult<Vec<(u64, Vec<u8>, FileType)>> {
+    match layout {
+        crate::MountLayout::DiskOverlay => Ok(VIRTUAL_DIRS
+            .iter()
+            .map(|&(ino, name)| (ino, name.as_bytes().to_vec(), FileType::Directory))
+            .collect()),
+        crate::MountLayout::Raw => {
+            let mut out = Vec::new();
+            for e in fs.read_dir(root_ino)? {
+                if e.name == b"." || e.name == b".." {
+                    continue;
+                }
+                // Encode into the ro/ namespace so the existing sub-tree
+                // callbacks (Ro decode) serve everything below the root.
+                out.push((ro_ino(e.inode), e.name, fs_file_type_to_fuse(e.file_type)));
+            }
+            Ok(out)
+        }
+    }
+}
+
 impl Filesystem for ForensicFuseFs {
     fn lookup(&mut self, _req: &Request, parent: u64, name: &OsStr, reply: ReplyEntry) {
         let name_bytes = name.as_encoded_bytes();
 
-        // Virtual root: resolve virtual directory names.
-        if parent == FUSE_ROOT_INO {
+        // Virtual root (disk overlay): resolve virtual directory names. In Raw
+        // layout the root maps straight to the ForensicFs root (handled below).
+        if parent == FUSE_ROOT_INO && self.layout == crate::MountLayout::DiskOverlay {
             for &(ino, dir_name) in VIRTUAL_DIRS {
                 if name_bytes == dir_name.as_bytes() {
                     let attr = if ino == FUSE_RW_INO && self.has_session() {
@@ -590,9 +630,11 @@ impl Filesystem for ForensicFuseFs {
             }
         }
 
-        // ro/ namespace: the ro/ virtual dir itself maps to the fs root inode.
+        // ro/ namespace: the ro/ virtual dir maps to the fs root inode. In Raw
+        // layout the FUSE root itself maps to the fs root (no ro/ wrapper).
         let fs_parent = match parent {
             FUSE_RO_INO => self.root_ino,
+            FUSE_ROOT_INO if self.layout == crate::MountLayout::Raw => self.root_ino,
             _ => {
                 if let InodeNamespace::Ro(ino) = decode_fuse_ino(parent) {
                     ino
@@ -779,19 +821,23 @@ impl Filesystem for ForensicFuseFs {
     ) {
         let offset = offset as usize;
 
-        // Virtual root directory.
+        // Root directory: virtual dirs (DiskOverlay) or the ForensicFs tree
+        // directly (Raw) — both via the tested root_children() decision.
         if ino == FUSE_ROOT_INO {
-            let entries: Vec<(u64, FileType, &str)> = vec![
-                (FUSE_ROOT_INO, FileType::Directory, "."),
-                (FUSE_ROOT_INO, FileType::Directory, ".."),
-                (FUSE_RO_INO, FileType::Directory, "ro"),
-                (FUSE_RW_INO, FileType::Directory, "rw"),
-                (FUSE_DELETED_INO, FileType::Directory, "deleted"),
-                (FUSE_JOURNAL_INO, FileType::Directory, "journal"),
-                (FUSE_METADATA_INO, FileType::Directory, "metadata"),
-                (FUSE_UNALLOCATED_INO, FileType::Directory, "unallocated"),
-                (FUSE_SESSION_INO, FileType::Directory, "session"),
+            let mut entries: Vec<(u64, FileType, String)> = vec![
+                (FUSE_ROOT_INO, FileType::Directory, ".".to_string()),
+                (FUSE_ROOT_INO, FileType::Directory, "..".to_string()),
             ];
+            {
+                let mut fs = self.fs.borrow_mut();
+                let Ok(children) = root_children(self.layout, &mut **fs, self.root_ino) else {
+                    reply.error(libc::EIO);
+                    return;
+                };
+                for (fino, name, kind) in children {
+                    entries.push((fino, kind, String::from_utf8_lossy(&name).into_owned()));
+                }
+            }
             for (i, (entry_ino, kind, name)) in entries.iter().enumerate().skip(offset) {
                 if reply.add(*entry_ino, (i + 1) as i64, *kind, name) {
                     break;
@@ -2023,6 +2069,49 @@ mod tests {
     }
 
     // -----------------------------------------------------------------------
+    // root_children — MountLayout decision (Humble Object)
+    // -----------------------------------------------------------------------
+
+    fn root_child_names(layout: crate::MountLayout) -> Vec<String> {
+        let mut fs = MockForensicFs;
+        let root = fs.root_ino();
+        root_children(layout, &mut fs, root)
+            .unwrap()
+            .iter()
+            .map(|(_, n, _)| String::from_utf8_lossy(n).to_string())
+            .collect()
+    }
+
+    #[test]
+    fn root_children_raw_lists_fs_tree_without_overlay() {
+        let names = root_child_names(crate::MountLayout::Raw);
+        assert!(names.contains(&"hello.txt".to_string()), "got {names:?}");
+        assert!(names.contains(&"subdir".to_string()), "got {names:?}");
+        assert!(
+            !names
+                .iter()
+                .any(|n| n == "rw" || n == "deleted" || n == "ro"),
+            "Raw root must have no overlay dirs: {names:?}"
+        );
+    }
+
+    #[test]
+    fn root_children_diskoverlay_lists_virtual_dirs() {
+        let names = root_child_names(crate::MountLayout::DiskOverlay);
+        for d in [
+            "ro",
+            "rw",
+            "deleted",
+            "journal",
+            "metadata",
+            "unallocated",
+            "session",
+        ] {
+            assert!(names.contains(&d.to_string()), "missing {d}: {names:?}");
+        }
+    }
+
+    // -----------------------------------------------------------------------
     // VIRTUAL_DIRS constant
     // -----------------------------------------------------------------------
 
@@ -2224,7 +2313,11 @@ mod tests {
     }
 
     fn make_mock_fuse() -> ForensicFuseFs {
-        ForensicFuseFs::new(Box::new(MockForensicFs), None)
+        ForensicFuseFs::new(
+            Box::new(MockForensicFs),
+            None,
+            crate::MountLayout::DiskOverlay,
+        )
     }
 
     #[test]

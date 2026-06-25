@@ -19,7 +19,7 @@ pub fn mount_unix(
     session: Option<Session>,
     options: &MountOptions,
 ) -> io::Result<()> {
-    let fuse_fs = ForensicFuseFs::new(fs, session);
+    let fuse_fs = ForensicFuseFs::new(fs, session, options.layout);
 
     let mut fuse_options = vec![fuser::MountOption::FSName(options.fs_name.clone())];
     if options.read_only {
@@ -75,6 +75,7 @@ mod tests {
             read_only: true,
             daemon: true,
             fs_name: "ext4fs".to_string(),
+            layout: crate::MountLayout::DiskOverlay,
         };
         assert!(opts.read_only);
         assert!(opts.daemon);

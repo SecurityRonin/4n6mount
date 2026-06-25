@@ -5,7 +5,8 @@ use clap::Parser;
 #[derive(Parser)]
 #[command(
     name = "4n6mount",
-    about = "Universal forensic FUSE mount — auto-detects ext4, NTFS, exFAT",
+    about = "Universal forensic FUSE mount — auto-detects ext4, NTFS, exFAT, HFS+, APFS, \
+             ISO9660, EWF/VMDK containers, and zip/7z/tar(.gz/.bz2) archives",
     version
 )]
 struct Cli {
@@ -18,6 +19,11 @@ struct Cli {
     /// Force filesystem type (auto-detected if omitted)
     #[arg(long)]
     fs: Option<String>,
+
+    /// Symbol file (ISF JSON or PDB) for memory-dump analysis. Optional for a
+    /// Windows crash dump whose header carries CR3 + kernel list heads.
+    #[arg(long)]
+    symbols: Option<String>,
 
     /// Session directory for COW overlay persistence
     #[arg(long)]
@@ -103,6 +109,18 @@ fn main() {
         std::process::exit(1);
     });
 
+    // Memory-dump path: explicit `--fs memory`, or a recognized dump signature.
+    // A memory dump mounts read-only with the Raw layout (its own top level),
+    // bypassing the disk overlay entirely.
+    let force_memory = matches!(cli.fs.as_deref(), Some("memory" | "mem"));
+    let detected_memory = forensic_mount::detect::detect_memory_dump(&mut file)
+        .ok()
+        .flatten();
+    if force_memory || detected_memory.is_some() {
+        route_memory_mount(&image, &mountpoint, cli.symbols.as_deref(), cli.daemon);
+        return;
+    }
+
     let fs_type = if let Some(fs_str) = &cli.fs {
         fs_str
             .parse::<forensic_mount::detect::FsType>()
@@ -119,22 +137,18 @@ fn main() {
 
     eprintln!("Detected filesystem: {fs_type}");
 
-    // Create ForensicFs based on detected type
+    // Compute a fallback name for raw (Unknown) mounts from the image basename.
+    let image_name = std::path::Path::new(&image).file_name().map_or_else(
+        || "evidence.bin".to_string(),
+        |n| n.to_string_lossy().to_string(),
+    );
+
+    // Create the ForensicFs. Container formats (EWF/VMDK) are opened here, then
+    // their inner filesystem is detected and built; every other type — disk
+    // filesystems and archives alike — is built directly from the image file.
+    // All construction funnels through `build_filesystem`, so a format is wired
+    // in exactly once.
     let forensic_fs: Box<dyn forensic_mount::ForensicFs + Send> = match fs_type {
-        #[cfg(feature = "ext4")]
-        forensic_mount::detect::FsType::Ext4 => Box::new(
-            forensic_mount::fs_ext4::Ext4ForensicFs::new(file).unwrap_or_else(|e| {
-                eprintln!("Cannot parse ext4: {e}");
-                std::process::exit(1);
-            }),
-        ),
-        #[cfg(feature = "iso")]
-        forensic_mount::detect::FsType::Iso => Box::new(
-            forensic_mount::fs_iso::IsoForensicFs::new(file).unwrap_or_else(|e| {
-                eprintln!("Cannot parse ISO 9660: {e}");
-                std::process::exit(1);
-            }),
-        ),
         #[cfg(feature = "vmdk")]
         forensic_mount::detect::FsType::Vmdk => {
             let mut vmdk_reader = vmdk::VmdkFileReader::open_path(std::path::Path::new(&image))
@@ -142,46 +156,13 @@ fn main() {
                     eprintln!("Cannot open VMDK image: {e}");
                     std::process::exit(1);
                 });
-
-            // Detect the filesystem inside the VMDK virtual disk (EWF-style).
-            let inner_fs_type = forensic_mount::detect::detect_filesystem(&mut vmdk_reader)
-                .unwrap_or_else(|e| {
-                    eprintln!("Cannot detect filesystem in VMDK: {e}");
-                    std::process::exit(1);
-                });
-
-            eprintln!("VMDK container detected, inner filesystem: {inner_fs_type}");
-
-            match inner_fs_type {
-                #[cfg(feature = "ext4")]
-                forensic_mount::detect::FsType::Ext4 => Box::new(
-                    forensic_mount::fs_ext4::Ext4ForensicFs::new(vmdk_reader).unwrap_or_else(|e| {
-                        eprintln!("Cannot parse ext4 in VMDK: {e}");
-                        std::process::exit(1);
-                    }),
-                ),
-                #[cfg(feature = "iso")]
-                forensic_mount::detect::FsType::Iso => Box::new(
-                    forensic_mount::fs_iso::IsoForensicFs::new(vmdk_reader).unwrap_or_else(|e| {
-                        eprintln!("Cannot parse ISO 9660 in VMDK: {e}");
-                        std::process::exit(1);
-                    }),
-                ),
-                _ => {
-                    eprintln!("No supported filesystem detected inside VMDK \u{2014} mounting as raw data");
-                    let filename = std::path::Path::new(&image).file_name().map_or_else(
-                        || "evidence.bin".to_string(),
-                        |n| n.to_string_lossy().to_string(),
-                    );
-                    Box::new(
-                        forensic_mount::fs_raw::RawForensicFs::new(vmdk_reader, filename)
-                            .unwrap_or_else(|e| {
-                                eprintln!("Cannot create raw FS: {e}");
-                                std::process::exit(1);
-                            }),
-                    )
-                }
-            }
+            let inner = forensic_mount::detect::detect_filesystem(&mut vmdk_reader)
+                .unwrap_or(forensic_mount::detect::FsType::Unknown);
+            eprintln!("VMDK container detected, inner filesystem: {inner}");
+            forensic_mount::build_filesystem(vmdk_reader, inner, &image_name).unwrap_or_else(|e| {
+                eprintln!("Cannot mount filesystem inside VMDK: {e}");
+                std::process::exit(1);
+            })
         }
         #[cfg(feature = "ewf")]
         forensic_mount::detect::FsType::Ewf => {
@@ -189,57 +170,18 @@ fn main() {
                 eprintln!("Cannot open EWF image: {e}");
                 std::process::exit(1);
             });
-
-            // Detect filesystem inside the EWF container
-            let inner_fs_type = forensic_mount::detect::detect_filesystem(&mut ewf_reader)
-                .unwrap_or_else(|e| {
-                    eprintln!("Cannot detect filesystem in EWF: {e}");
-                    std::process::exit(1);
-                });
-
-            eprintln!("EWF container detected, inner filesystem: {inner_fs_type}");
-
-            match inner_fs_type {
-                #[cfg(feature = "ext4")]
-                forensic_mount::detect::FsType::Ext4 => Box::new(
-                    forensic_mount::fs_ext4::Ext4ForensicFs::new(ewf_reader).unwrap_or_else(|e| {
-                        eprintln!("Cannot parse ext4 in EWF: {e}");
-                        std::process::exit(1);
-                    }),
-                ),
-                #[cfg(feature = "iso")]
-                forensic_mount::detect::FsType::Iso => Box::new(
-                    forensic_mount::fs_iso::IsoForensicFs::new(ewf_reader).unwrap_or_else(|e| {
-                        eprintln!("Cannot parse ISO 9660 in EWF: {e}");
-                        std::process::exit(1);
-                    }),
-                ),
-                forensic_mount::detect::FsType::Unknown => {
-                    eprintln!("No filesystem detected inside EWF — mounting as raw data");
-                    let filename = std::path::Path::new(&image).file_name().map_or_else(
-                        || "evidence.bin".to_string(),
-                        |n| n.to_string_lossy().to_string(),
-                    );
-                    Box::new(
-                        forensic_mount::fs_raw::RawForensicFs::new(ewf_reader, filename)
-                            .unwrap_or_else(|e| {
-                                eprintln!("Cannot create raw FS: {e}");
-                                std::process::exit(1);
-                            }),
-                    )
-                }
-                other => {
-                    eprintln!("Filesystem '{other}' inside EWF is not supported");
-                    std::process::exit(1);
-                }
-            }
+            let inner = forensic_mount::detect::detect_filesystem(&mut ewf_reader)
+                .unwrap_or(forensic_mount::detect::FsType::Unknown);
+            eprintln!("EWF container detected, inner filesystem: {inner}");
+            forensic_mount::build_filesystem(ewf_reader, inner, &image_name).unwrap_or_else(|e| {
+                eprintln!("Cannot mount filesystem inside EWF: {e}");
+                std::process::exit(1);
+            })
         }
-        _ => {
-            eprintln!(
-                "Filesystem type '{fs_type}' is not supported (compiled features may be missing)"
-            );
+        other => forensic_mount::build_filesystem(file, other, &image_name).unwrap_or_else(|e| {
+            eprintln!("{e}");
             std::process::exit(1);
-        }
+        }),
     };
 
     // Build session if requested
@@ -264,6 +206,7 @@ fn main() {
         read_only: session_mgr.is_none(),
         daemon: cli.daemon,
         fs_name: format!("4n6mount-{fs_type}"),
+        layout: forensic_mount::MountLayout::DiskOverlay,
     };
 
     eprintln!("Mounting {image} at {mountpoint}");
@@ -277,6 +220,42 @@ fn main() {
         eprintln!("Mount failed: {e}");
         std::process::exit(1);
     });
+}
+
+/// Build and mount a memory dump as a read-only `Raw`-layout filesystem.
+#[cfg(feature = "memory")]
+fn route_memory_mount(image: &str, mountpoint: &str, symbols: Option<&str>, daemon: bool) {
+    let fs = forensic_mount::build_memory_fs(
+        std::path::Path::new(image),
+        symbols.map(std::path::Path::new),
+    )
+    .unwrap_or_else(|e| {
+        eprintln!("{e}");
+        std::process::exit(1);
+    });
+    let options = forensic_mount::MountOptions {
+        read_only: true,
+        daemon,
+        fs_name: "4n6mount-memory".to_string(),
+        layout: forensic_mount::MountLayout::Raw,
+    };
+    eprintln!("Mounting memory dump {image} at {mountpoint}");
+    forensic_mount::mount(fs, std::path::Path::new(mountpoint), None, &options).unwrap_or_else(
+        |e| {
+            eprintln!("Mount failed: {e}");
+            std::process::exit(1);
+        },
+    );
+}
+
+/// Memory support was not compiled in: fail loud rather than silently misroute.
+#[cfg(not(feature = "memory"))]
+fn route_memory_mount(_image: &str, _mountpoint: &str, _symbols: Option<&str>, _daemon: bool) {
+    eprintln!(
+        "This build has no memory-dump support (the `memory` feature was not enabled). \
+         Rebuild with `--features memory`."
+    );
+    std::process::exit(1);
 }
 
 #[cfg(test)]
@@ -322,6 +301,21 @@ mod tests {
             "--resume",
         ]);
         assert!(cli.resume);
+    }
+
+    #[test]
+    fn parse_mount_with_symbols() {
+        let cli = Cli::parse_from([
+            "4n6mount",
+            "memory.lime",
+            "/mnt",
+            "--fs",
+            "memory",
+            "--symbols",
+            "linux.json",
+        ]);
+        assert_eq!(cli.fs.unwrap(), "memory");
+        assert_eq!(cli.symbols.unwrap(), "linux.json");
     }
 
     #[test]

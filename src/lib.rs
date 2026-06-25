@@ -1,5 +1,6 @@
 #![forbid(unsafe_code)]
 
+pub mod archive_tree;
 pub mod detect;
 pub mod filter;
 pub mod fusefs;
@@ -17,12 +18,52 @@ pub mod fs_ext4;
 #[cfg(feature = "iso")]
 pub mod fs_iso;
 
+#[cfg(feature = "tarball")]
+pub mod fs_tar;
+
+#[cfg(feature = "zip")]
+pub mod fs_zip;
+
+#[cfg(feature = "sevenz")]
+pub mod fs_sevenz;
+
+#[cfg(feature = "ntfs")]
+pub mod fs_ntfs;
+
+#[cfg(feature = "hfsplus")]
+pub mod fs_hfsplus;
+
+#[cfg(feature = "exfat")]
+pub mod fs_exfat;
+
+#[cfg(feature = "apfs")]
+pub mod fs_apfs;
+
+#[cfg(feature = "memory")]
+pub mod mem;
+
 pub mod fs_raw;
 
 pub use types::*;
 
 use std::io;
 use std::path::Path;
+
+/// How the FUSE mount renders a [`ForensicFs`].
+///
+/// `DiskOverlay` is the disk-image presentation: the mount root lists the
+/// `ro/ rw/ deleted/ …` virtual directories and the filesystem tree lives under
+/// `ro/`. `Raw` renders the `ForensicFs` tree directly at the mount root with no
+/// overlay — used for read-only memory mounts (and any provider that owns its
+/// own top level).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum MountLayout {
+    /// Disk-image overlay: `ro/`, `rw/`, `deleted/`, … virtual directories.
+    #[default]
+    DiskOverlay,
+    /// The `ForensicFs` tree rendered directly at the root, read-only.
+    Raw,
+}
 
 /// Mount options for the FUSE filesystem.
 ///
@@ -32,6 +73,7 @@ pub struct MountOptions {
     pub read_only: bool,
     pub daemon: bool,
     pub fs_name: String,
+    pub layout: MountLayout,
 }
 
 impl Default for MountOptions {
@@ -40,6 +82,7 @@ impl Default for MountOptions {
             read_only: false,
             daemon: false,
             fs_name: "4n6mount".to_string(),
+            layout: MountLayout::DiskOverlay,
         }
     }
 }
@@ -115,6 +158,122 @@ pub trait ForensicFs {
     }
 }
 
+/// Construct a [`ForensicFs`] from a seekable byte source and a detected type.
+///
+/// This is the single dispatch point shared by the CLI's outer mount path and
+/// its container (EWF/VMDK) inner-filesystem path, so a new format is wired in
+/// exactly once. `name` is used only to label the single file of a raw
+/// (`FsType::Unknown`) mount.
+///
+/// Archives (`zip`/`7z`/`tar.gz`) and filesystems (`ext4`/`ntfs`/`exfat`/
+/// `hfsplus`/`iso`/`apfs`) all build from the same `Read + Seek` reader.
+/// Container types (`Ewf`/`Vmdk`) are opened by the caller, not here.
+///
+/// # Errors
+///
+/// Returns the parse error (as `InvalidData`) if the source does not match the
+/// claimed type, or `Unsupported` for APFS / a feature that was not compiled in.
+pub fn build_filesystem<R: io::Read + io::Seek + Send + 'static>(
+    reader: R,
+    fs_type: detect::FsType,
+    name: &str,
+) -> io::Result<Box<dyn ForensicFs + Send>> {
+    use detect::FsType;
+    let bad = |e: FsError| io::Error::new(io::ErrorKind::InvalidData, e.to_string());
+    match fs_type {
+        #[cfg(feature = "ext4")]
+        FsType::Ext4 => Ok(Box::new(fs_ext4::Ext4ForensicFs::new(reader).map_err(bad)?)),
+        #[cfg(feature = "iso")]
+        FsType::Iso => Ok(Box::new(fs_iso::IsoForensicFs::new(reader).map_err(bad)?)),
+        #[cfg(feature = "ntfs")]
+        FsType::Ntfs => Ok(Box::new(fs_ntfs::NtfsForensicFs::new(reader).map_err(bad)?)),
+        #[cfg(feature = "hfsplus")]
+        FsType::Hfsplus => Ok(Box::new(
+            fs_hfsplus::HfsPlusForensicFs::new(reader).map_err(bad)?,
+        )),
+        #[cfg(feature = "exfat")]
+        FsType::ExFat => Ok(Box::new(
+            fs_exfat::ExFatForensicFs::new(reader).map_err(bad)?,
+        )),
+        #[cfg(feature = "tarball")]
+        FsType::TarGz => Ok(Box::new(
+            fs_tar::TarballForensicFs::from_gz(reader).map_err(bad)?,
+        )),
+        #[cfg(feature = "tarball")]
+        FsType::TarBz2 => Ok(Box::new(
+            fs_tar::TarballForensicFs::from_bz2(reader).map_err(bad)?,
+        )),
+        #[cfg(feature = "zip")]
+        FsType::Zip => Ok(Box::new(fs_zip::ZipForensicFs::new(reader).map_err(bad)?)),
+        #[cfg(feature = "sevenz")]
+        FsType::SevenZ => Ok(Box::new(
+            fs_sevenz::SevenZForensicFs::new(reader).map_err(bad)?,
+        )),
+        FsType::Unknown => Ok(Box::new(
+            fs_raw::RawForensicFs::new(reader, name.to_string()).map_err(bad)?,
+        )),
+        #[cfg(feature = "apfs")]
+        FsType::Apfs => Ok(Box::new(fs_apfs::ApfsForensicFs::new(reader).map_err(bad)?)),
+        other => Err(io::Error::new(
+            io::ErrorKind::Unsupported,
+            format!(
+                "filesystem '{other}' cannot be built here \
+                 (a container type, or its feature was not compiled in)"
+            ),
+        )),
+    }
+}
+
+/// Open a memory dump and build a [`MemoryFs`] over it, bootstrapping the
+/// analysis context (OS, DTB/CR3, kernel list-heads) via `memf-session`.
+///
+/// `symbols` is an optional ISF/PDB path. A header-bearing Windows crash dump
+/// bootstraps with an empty resolver; raw `.mem` and Linux dumps need symbols.
+///
+/// Fails LOUD on a bootstrap failure (bad dump, undetectable OS, missing
+/// symbols) rather than mounting an empty tree — the memory mount is meaningless
+/// without a valid context.
+///
+/// # Errors
+///
+/// Propagates dump-open, symbol-load, and analysis-bootstrap failures as
+/// `InvalidData`.
+#[cfg(feature = "memory")]
+pub fn build_memory_fs(
+    image: &Path,
+    symbols: Option<&Path>,
+) -> io::Result<Box<dyn ForensicFs + Send>> {
+    let bad = |msg: String| io::Error::new(io::ErrorKind::InvalidData, msg);
+
+    let provider = memf_format::open_dump(image)
+        .map_err(|e| bad(format!("cannot open memory dump {}: {e}", image.display())))?;
+
+    // Load symbols if given; otherwise an empty resolver (sufficient for a
+    // crash dump whose header carries CR3 + list-heads).
+    let resolver: Box<dyn memf_symbols::SymbolResolver> = match symbols {
+        Some(p) => Box::new(
+            memf_symbols::isf::IsfResolver::from_path(p)
+                .map_err(|e| bad(format!("cannot load symbols {}: {e}", p.display())))?,
+        ),
+        None => Box::new(
+            memf_symbols::isf::IsfResolver::from_value(&serde_json::json!({}))
+                .map_err(|e| bad(format!("empty symbol resolver: {e}")))?,
+        ),
+    };
+
+    let metadata = provider.metadata();
+    let ctx = memf_session::build_analysis_context(
+        metadata.as_ref(),
+        resolver.as_ref(),
+        provider.as_ref(),
+    )
+    .map_err(|e| bad(format!("memory analysis bootstrap failed: {e}")))?;
+
+    Ok(Box::new(mem::memoryfs::MemoryFs::new(
+        provider, ctx, resolver,
+    )))
+}
+
 /// Mount a forensic filesystem via FUSE (or `WinFSP` on Windows).
 ///
 /// This is the main entry point for consumers.  Pass a `ForensicFs`
@@ -145,5 +304,100 @@ pub fn mount(
             io::ErrorKind::Unsupported,
             "no FUSE support on this platform",
         ))
+    }
+}
+
+#[cfg(test)]
+mod dispatch_tests {
+    use super::*;
+    use std::io::Cursor;
+
+    #[test]
+    fn apfs_garbage_errors_loud_not_silent() {
+        // A non-APFS source must fail loud (InvalidData), never silently mount empty.
+        match build_filesystem(Cursor::new(vec![0u8; 64]), detect::FsType::Apfs, "x") {
+            Err(e) => assert_eq!(e.kind(), io::ErrorKind::InvalidData),
+            Ok(_) => panic!("garbage must error, not mount"),
+        }
+    }
+
+    #[cfg(feature = "apfs")]
+    #[test]
+    fn apfs_dispatches_to_module() {
+        let img = "/Users/4n6h4x0r/src/apfs-forensic/tests/data/apfs_fstree.bin";
+        let Ok(data) = std::fs::read(img) else {
+            eprintln!("skip: apfs_fstree.bin unavailable");
+            return;
+        };
+        let fs = build_filesystem(Cursor::new(data), detect::FsType::Apfs, "x").unwrap();
+        assert_eq!(fs.fs_info().unwrap()["type"], "apfs");
+    }
+
+    #[test]
+    fn unknown_builds_raw() {
+        let fs = build_filesystem(
+            Cursor::new(b"hello".to_vec()),
+            detect::FsType::Unknown,
+            "evidence.bin",
+        )
+        .unwrap();
+        assert_eq!(fs.fs_info().unwrap()["filesystem"], "raw");
+    }
+
+    #[cfg(feature = "hfsplus")]
+    #[test]
+    fn hfsplus_dispatches_to_module() {
+        let img = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/data/hfsplus.img");
+        let Ok(data) = std::fs::read(img) else {
+            eprintln!("skip: hfsplus.img unavailable");
+            return;
+        };
+        let fs = build_filesystem(Cursor::new(data), detect::FsType::Hfsplus, "x").unwrap();
+        assert_eq!(fs.fs_info().unwrap()["type"], "hfsplus");
+    }
+
+    #[cfg(feature = "exfat")]
+    #[test]
+    fn exfat_dispatches_to_module() {
+        let img = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/data/exfat.img");
+        let Ok(data) = std::fs::read(img) else {
+            eprintln!("skip: exfat.img unavailable");
+            return;
+        };
+        let fs = build_filesystem(Cursor::new(data), detect::FsType::ExFat, "x").unwrap();
+        assert_eq!(fs.fs_info().unwrap()["type"], "exfat");
+    }
+}
+
+#[cfg(all(test, feature = "memory"))]
+mod memory_tests {
+    use super::*;
+
+    /// build_memory_fs bootstraps a synthetic Windows crash dump (header carries
+    /// CR3 + machine type, so no symbols are required) and renders sys/os-info.
+    #[test]
+    fn build_memory_fs_bootstraps_crashdump() {
+        use memf_format::test_builders::CrashDumpBuilder;
+        let bytes = CrashDumpBuilder::new().cr3(0x1ab000).build();
+
+        let dir = std::env::temp_dir().join(format!("4n6mem_{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("crash.dmp");
+        std::fs::write(&path, &bytes).unwrap();
+
+        let mut fs = build_memory_fs(&path, None).expect("crash dump must bootstrap");
+        // Root is the Raw memory tree: sys/ present, os-info.txt renders the OS.
+        let sys = fs
+            .lookup(mem::inode::ROOT_INO, b"sys")
+            .unwrap()
+            .expect("sys");
+        let oi = fs
+            .lookup(sys, b"os-info.txt")
+            .unwrap()
+            .expect("os-info.txt");
+        let text = String::from_utf8(fs.read_file(oi).unwrap()).unwrap();
+        assert!(text.contains("OS: Windows"), "got: {text}");
+
+        std::fs::remove_dir_all(&dir).ok();
     }
 }
