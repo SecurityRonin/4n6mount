@@ -249,8 +249,12 @@ pub fn mount_windows(
         .map_err(|e| std::io::Error::other(format!("WinFsp mount: {e:?}")))?;
     host.start()
         .map_err(|e| std::io::Error::other(format!("WinFsp start: {e:?}")))?;
+    eprintln!("4n6mount: mounted at {} (WinFsp)", mountpoint.display());
 
-    // Block while WinFsp serves on its own threads, until the process is signalled.
-    std::thread::park();
-    Ok(())
+    // `start()` runs the dispatcher on its own threads and returns. Keep this
+    // thread (and therefore `host`, whose Drop unmounts) alive indefinitely;
+    // `park()` can wake spuriously, so block on a long sleep loop instead.
+    loop {
+        std::thread::sleep(std::time::Duration::from_secs(3600));
+    }
 }
