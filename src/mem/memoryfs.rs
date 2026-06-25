@@ -715,6 +715,21 @@ mod tests {
         assert!(!text.is_empty() && text.contains("network"), "got: {text}");
     }
 
+    #[test]
+    fn network_txt_windows_uses_pool_scan_not_head_gap() {
+        // Windows network must run the symbol-free pool scanners (scan_tcp_*),
+        // not surface the old "partition-table VA not resolved" head gap. On the
+        // synthetic dump the scanners find nothing → a "0 connections" note.
+        let mut fs = mem_fs(); // ctx.os == Windows
+        let sys = fs.lookup(ROOT_INO, b"sys").unwrap().unwrap();
+        let n = fs.lookup(sys, b"network.txt").unwrap().unwrap();
+        let text = String::from_utf8(fs.read_file(n).unwrap()).unwrap();
+        assert!(
+            !text.contains("not resolved"),
+            "Windows net must pool-scan, not report a head gap: {text}"
+        );
+    }
+
     // -- sys/dmesg.txt (Task 2.5) --
 
     #[test]
