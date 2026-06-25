@@ -132,6 +132,13 @@ impl<P: PhysicalMemoryProvider> MemoryFs<P> {
             Err(why) => format!("# pslist unavailable: {why}\n"),
         }
     }
+
+    /// Render `sys/modules.txt`: the OS-appropriate kernel-module walker, or a
+    /// one-line diagnostic header on a walker miss/error (fail-soft).
+    fn render_modules(&self) -> String {
+        // RED stub — implemented in the GREEN step.
+        String::new()
+    }
 }
 
 impl From<memf_windows::WinProcessInfo> for ProcRow {
@@ -178,6 +185,24 @@ pub(crate) fn render_process_table(rows: &[ProcRow]) -> String {
         ));
     }
     out
+}
+
+/// One kernel-module/driver row, normalized across OSes.
+#[derive(Debug, Clone)]
+pub(crate) struct ModRow {
+    pub name: String,
+    pub base_addr: u64,
+    pub size: u64,
+    /// On-disk path (Windows driver) or empty (Linux module).
+    pub path: String,
+}
+
+/// Render a module list as a tab-separated table with a column header. An empty
+/// slice yields just the header line (the caller adds a diagnostic comment).
+pub(crate) fn render_module_table(rows: &[ModRow]) -> String {
+    // RED stub — implemented in the GREEN step.
+    let _ = rows;
+    String::new()
 }
 
 impl<P: PhysicalMemoryProvider> ForensicFs for MemoryFs<P> {
@@ -229,6 +254,9 @@ impl<P: PhysicalMemoryProvider> ForensicFs for MemoryFs<P> {
                 ino,
                 self.render_processes().len() as u64,
             )),
+            Artifact::SysModules => {
+                Ok(Self::file_metadata(ino, self.render_modules().len() as u64))
+            }
         }
     }
 
@@ -242,6 +270,7 @@ impl<P: PhysicalMemoryProvider> ForensicFs for MemoryFs<P> {
         match artifact {
             Artifact::SysOsInfo => Ok(self.render_os_info().into_bytes()),
             Artifact::SysProcesses => Ok(self.render_processes().into_bytes()),
+            Artifact::SysModules => Ok(self.render_modules().into_bytes()),
             Artifact::Dir => Err(not_supported("read_file on a directory")),
         }
     }
@@ -425,6 +454,67 @@ mod tests {
         assert!(
             text.contains("pslist"),
             "expected a pslist diagnostic: {text}"
+        );
+    }
+
+    // -- sys/modules.txt (Task 2.2) --
+
+    #[test]
+    fn render_module_table_has_header_and_rows() {
+        let rows = vec![
+            ModRow {
+                name: "ntoskrnl.exe".into(),
+                base_addr: 0xfffff800_0000_0000,
+                size: 0x800000,
+                path: "\\SystemRoot\\ntoskrnl.exe".into(),
+            },
+            ModRow {
+                name: "tcpip.sys".into(),
+                base_addr: 0xfffff800_0100_0000,
+                size: 0x200000,
+                path: String::new(),
+            },
+        ];
+        let out = render_module_table(&rows);
+        let header = out.lines().next().unwrap_or_default();
+        assert!(
+            header.contains("NAME") && header.contains("BASE") && header.contains("SIZE"),
+            "header: {header:?}"
+        );
+        assert!(
+            out.contains("ntoskrnl.exe") && out.contains("tcpip.sys"),
+            "got: {out}"
+        );
+    }
+
+    #[test]
+    fn render_module_table_empty_is_just_header() {
+        let out = render_module_table(&[]);
+        assert_eq!(out.lines().count(), 1, "empty → header only: {out:?}");
+        assert!(out.contains("NAME"));
+    }
+
+    #[test]
+    fn modules_txt_is_a_regular_file_under_sys() {
+        let mut fs = mem_fs();
+        let sys = fs.lookup(ROOT_INO, b"sys").unwrap().unwrap();
+        let m = fs
+            .lookup(sys, b"modules.txt")
+            .unwrap()
+            .expect("modules.txt");
+        assert_eq!(fs.metadata(m).unwrap().file_type, FsFileType::RegularFile);
+    }
+
+    #[test]
+    fn modules_txt_fail_soft_diagnostic_not_empty() {
+        let mut fs = mem_fs();
+        let sys = fs.lookup(ROOT_INO, b"sys").unwrap().unwrap();
+        let m = fs.lookup(sys, b"modules.txt").unwrap().unwrap();
+        let text = String::from_utf8(fs.read_file(m).unwrap()).unwrap();
+        assert!(!text.is_empty(), "must surface a diagnostic, not empty");
+        assert!(
+            text.contains("modules"),
+            "expected a modules diagnostic: {text}"
         );
     }
 }

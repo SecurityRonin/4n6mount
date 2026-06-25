@@ -22,6 +22,8 @@ pub enum Artifact {
     SysOsInfo,
     /// `sys/processes.txt` — pslist, rendered from the memf process walker.
     SysProcesses,
+    /// `sys/modules.txt` — kernel modules/drivers, from the memf module walker.
+    SysModules,
 }
 
 /// One node in the synthetic tree.
@@ -74,6 +76,7 @@ impl Registry {
         // sys/ lazily-rendered artifacts.
         registry.add_file(3, 7, "os-info.txt", Artifact::SysOsInfo);
         registry.add_file(3, 8, "processes.txt", Artifact::SysProcesses);
+        registry.add_file(3, 9, "modules.txt", Artifact::SysModules);
         registry
     }
 
