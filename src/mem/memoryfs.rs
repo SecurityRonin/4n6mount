@@ -136,8 +136,49 @@ impl<P: PhysicalMemoryProvider> MemoryFs<P> {
     /// Render `sys/modules.txt`: the OS-appropriate kernel-module walker, or a
     /// one-line diagnostic header on a walker miss/error (fail-soft).
     fn render_modules(&self) -> String {
-        // RED stub — implemented in the GREEN step.
-        String::new()
+        use memf_session::OsProfile;
+        let rows: Result<Vec<ModRow>, String> = match self.ctx.os {
+            OsProfile::Windows => match self.ctx.ps_loaded_module_list {
+                Some(head) => memf_windows::driver::walk_drivers(&self.reader, head)
+                    .map(|ds| ds.into_iter().map(ModRow::from).collect())
+                    .map_err(|e| format!("{e}")),
+                None => Err("PsLoadedModuleList not resolved (need --symbols?)".to_string()),
+            },
+            OsProfile::Linux => memf_linux::modules::walk_modules(&self.reader)
+                .map(|ms| ms.into_iter().map(ModRow::from).collect())
+                .map_err(|e| format!("{e}")),
+            OsProfile::MacOs => Err("not implemented for macOS".to_string()),
+        };
+        match rows {
+            Ok(rows) if !rows.is_empty() => render_module_table(&rows),
+            Ok(_) => format!(
+                "# modules: 0 entries (walker returned empty)\n{}",
+                render_module_table(&[])
+            ),
+            Err(why) => format!("# modules unavailable: {why}\n"),
+        }
+    }
+}
+
+impl From<memf_windows::WinDriverInfo> for ModRow {
+    fn from(d: memf_windows::WinDriverInfo) -> Self {
+        Self {
+            name: d.name,
+            base_addr: d.base_addr,
+            size: d.size,
+            path: d.full_path,
+        }
+    }
+}
+
+impl From<memf_linux::ModuleInfo> for ModRow {
+    fn from(m: memf_linux::ModuleInfo) -> Self {
+        Self {
+            name: m.name,
+            base_addr: m.base_addr,
+            size: m.size,
+            path: String::new(),
+        }
     }
 }
 
@@ -200,9 +241,14 @@ pub(crate) struct ModRow {
 /// Render a module list as a tab-separated table with a column header. An empty
 /// slice yields just the header line (the caller adds a diagnostic comment).
 pub(crate) fn render_module_table(rows: &[ModRow]) -> String {
-    // RED stub — implemented in the GREEN step.
-    let _ = rows;
-    String::new()
+    let mut out = String::from("NAME\tBASE\tSIZE\tPATH\n");
+    for r in rows {
+        out.push_str(&format!(
+            "{}\t{:#x}\t{}\t{}\n",
+            r.name, r.base_addr, r.size, r.path
+        ));
+    }
+    out
 }
 
 impl<P: PhysicalMemoryProvider> ForensicFs for MemoryFs<P> {
