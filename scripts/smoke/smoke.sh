@@ -13,8 +13,11 @@ pass=0; fail=0
 while IFS=$'\t' read -r name fixture flag layout subpath expected; do
   case "$name" in ''|\#*) continue;; esac
   mnt="$(mktemp -d)"; log="/tmp/4n6smoke_${name}.log"
-  "$BIN" "$FIX/$fixture" "$mnt" --fs "$flag" --daemon >"$log" 2>&1 || true
-  for _ in $(seq 1 30); do mountpoint -q "$mnt" && break; sleep 0.5; done
+  # Foreground mount, backgrounded by the shell (robust — does not rely on the
+  # binary's own --daemon fork, which can block in a headless CI runner).
+  "$BIN" "$FIX/$fixture" "$mnt" --fs "$flag" >"$log" 2>&1 &
+  mpid=$!
+  for _ in $(seq 1 40); do mountpoint -q "$mnt" && break; sleep 0.5; done
 
   if [ "$layout" = disk ]; then readpath="$mnt/ro/$subpath"; else readpath="$mnt/$subpath"; fi
   if grep -qF "$expected" "$readpath" 2>/dev/null; then
@@ -22,11 +25,12 @@ while IFS=$'\t' read -r name fixture flag layout subpath expected; do
   else
     echo "FAIL  $name  — '$expected' not found at $readpath"
     echo "      mount ls: $(ls -A "$mnt" 2>&1 | tr '\n' ' ')"
-    echo "      log: $(tail -n 2 "$log" 2>/dev/null | tr '\n' ' ')"
+    echo "      log: $(tail -n 3 "$log" 2>/dev/null | tr '\n' ' ')"
     fail=$((fail+1))
   fi
 
-  fusermount3 -u "$mnt" 2>/dev/null || fusermount -u "$mnt" 2>/dev/null || sudo umount "$mnt" 2>/dev/null || true
+  timeout 10 fusermount3 -u "$mnt" 2>/dev/null || timeout 10 fusermount -u "$mnt" 2>/dev/null || sudo umount -l "$mnt" 2>/dev/null || true
+  kill "$mpid" 2>/dev/null || true; wait "$mpid" 2>/dev/null || true
   rmdir "$mnt" 2>/dev/null || true
 done < "$MANIFEST"
 

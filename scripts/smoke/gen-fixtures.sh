@@ -54,7 +54,7 @@ ewfacquire -u -t "$OUT/test" -f encase6 -c deflate:none -S 1GiB "$W/ewf-inner.ra
 
 # --- VMDK: convert a raw ext4 image (inner FS holds hello.txt) ---
 mkfs_with_file "$W/vmdk-inner.raw" "mkfs.ext4 -F -q" "-o loop" "hello from vmdk"
-qemu-img convert -O vmdk "$W/vmdk-inner.raw" "$OUT/test.vmdk"
+qemu-img convert -O vmdk -o subformat=streamOptimized "$W/vmdk-inner.raw" "$OUT/test.vmdk"
 
 echo "=== minted fixtures in $OUT ==="
 ls -la "$OUT"
