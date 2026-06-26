@@ -67,17 +67,27 @@ jobs:
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'; $ProgressPreference = 'SilentlyContinue'
-          # Dokany (LGPL/MIT) runtime: kernel driver + System32 dokan2.dll.
-          Invoke-WebRequest https://github.com/dokan-dev/dokany/releases/download/v2.3.0.1000/Dokan_x64.msi -OutFile Dokan_x64.msi
-          $p = Start-Process msiexec.exe -ArgumentList '/i','Dokan_x64.msi','/passive','/norestart' -Wait -PassThru
-          if (@(0,3010,1641) -notcontains $p.ExitCode) { throw "Dokany install failed: exit $($p.ExitCode)" }
-          if (-not (Test-Path "$env:WINDIR\System32\dokan2.dll")) { throw 'Dokany install failed (dokan2.dll missing)' }
-          # The MSI registers and starts the driver; a redundant start reports
-          # 1056 (already running), which is success for us. Don't let that
-          # native non-zero exit fail the step under ErrorActionPreference=Stop.
           $PSNativeCommandUseErrorActionPreference = $false
-          sc.exe start dokan2 | Out-Null
-          Start-Sleep 2
+          # Dokany (LGPL/MIT) runtime: kernel driver + System32 dokan2.dll.
+          $msi = "$PWD\Dokan_x64.msi"
+          Write-Host "Downloading Dokany MSI..."
+          Invoke-WebRequest https://github.com/dokan-dev/dokany/releases/download/v2.3.0.1000/Dokan_x64.msi -OutFile $msi
+          Write-Host "Downloaded $((Get-Item $msi).Length) bytes; running msiexec /quiet..."
+          $proc = Start-Process msiexec.exe -ArgumentList '/i',"`"$msi`"",'/quiet','/norestart','/l*v','dokan-install.log' -Wait -PassThru
+          $code = if ($null -ne $proc.ExitCode) { $proc.ExitCode } else { 0 }
+          Write-Host "msiexec exit code: $code"
+          if (@(0,3010,1641) -notcontains $code) {
+            if (Test-Path dokan-install.log) { Get-Content dokan-install.log -Tail 40 | Out-Host }
+            throw "Dokany install failed: exit $code"
+          }
+          Write-Host "dokan2.dll present: $(Test-Path "$env:WINDIR\System32\dokan2.dll")"
+          if (-not (Test-Path "$env:WINDIR\System32\dokan2.dll")) { throw 'dokan2.dll missing after install' }
+          # The MSI registers + starts the driver; a redundant start reporting
+          # 1056 (already running) is success for us.
+          sc.exe query dokan2 | Out-Host
+          sc.exe start dokan2 2>&1 | Out-Host
+          Start-Sleep 3
+          Write-Host "Install step complete."
       - uses: actions/download-artifact@v4
         with:
           name: fixtures
