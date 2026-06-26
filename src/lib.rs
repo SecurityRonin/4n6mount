@@ -8,6 +8,7 @@ pub mod fusefs;
 pub mod inode_map;
 pub mod session;
 pub mod types;
+pub mod win_map;
 
 #[cfg(unix)]
 pub mod fuse_unix;
