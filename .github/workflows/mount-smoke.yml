@@ -57,12 +57,21 @@ jobs:
         shell: pwsh
         run: (Get-Content Cargo.toml) -replace ', path = "[^"]*"','' | Set-Content Cargo.toml
       - uses: dtolnay/rust-toolchain@stable
-      - name: Build (default + memory)
+      - name: Build (default + memory, release)
         shell: pwsh
         # dokan-sys self-compiles the Dokany usermode lib from vendored C via
         # the MSVC toolchain (no bindgen/libclang, no SDK needed), so the build
         # validates the Dokan port without any runtime install.
-        run: cargo build --features memory
+        #
+        # Release (not debug): dokan 0.3.1's OperationInfo::context() builds a
+        # reference from DOKAN_FILE_INFO.Context, which is null when Windows
+        # probes the fresh volume for non-existent paths (autorun.inf, etc.) and
+        # Dokan calls cleanup/close on the failed handle. Rust 1.78+ debug
+        # builds panic on the null-reference creation (inside dokan, before our
+        # no-op handler runs) and abort across the extern "stdcall" boundary.
+        # The shipped binary is release, where that assertion is absent and the
+        # unused null reference is harmless.
+        run: cargo build --release --features memory
       - name: Install Dokany runtime (driver + dll, for the runtime mount)
         shell: pwsh
         run: |
@@ -98,4 +107,4 @@ jobs:
           path: fixtures
       - name: Dokan mount smoke
         shell: pwsh
-        run: scripts/smoke/smoke.ps1 -Bin target\debug\4n6mount.exe -Fix fixtures
+        run: scripts/smoke/smoke.ps1 -Bin target\release\4n6mount.exe -Fix fixtures
