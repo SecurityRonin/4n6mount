@@ -1,9 +1,9 @@
 [package]
 name = "forensic-mount"
-version = "0.2.0"
+version = "0.3.0"
 edition = "2021"
 rust-version = "1.85"
-description = "Mount forensic disk images, archives, and memory dumps as a filesystem — ext4/NTFS/exFAT/HFS+/APFS/ISO, EWF/VMDK containers, zip/7z/tar, LiME/AVML/crash dumps"
+description = "Mount forensic disk images, archives, and memory dumps as a filesystem on Linux, macOS, and Windows — ext4/NTFS/exFAT/HFS+/APFS/ISO, EWF/VMDK containers, zip/7z/tar, LiME/AVML/crash dumps"
 license = "Apache-2.0"
 repository = "https://github.com/SecurityRonin/4n6mount"
 homepage = "https://github.com/SecurityRonin/4n6mount"
@@ -11,6 +11,8 @@ documentation = "https://docs.rs/forensic-mount"
 readme = "README.md"
 keywords = ["forensics", "fuse", "dfir", "filesystem", "memory-forensics"]
 categories = ["filesystem", "command-line-utilities"]
+# Test fixtures, CI smoke harness, and workflows are not needed by consumers.
+exclude = ["tests/data/*", "scripts/smoke/*", ".github/*", "fuzz/*"]
 
 [[bin]]
 name = "4n6mount"

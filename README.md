@@ -175,11 +175,15 @@ empty or a fabricated result. Per-process `proc/<pid>/`, `forensic/`, and raw
 
 ## Platform support
 
-| Platform | FUSE backend | Status |
-|----------|-------------|--------|
+| Platform | Mount backend | Status |
+|----------|--------------|--------|
 | **Linux** | fuser (libfuse) | Supported |
 | **macOS** | fuser (macFUSE) | Supported |
-| **Windows** | WinFSP | Stub (in progress) |
+| **Windows** | WinFsp | Supported (read-only) |
+
+On Windows the filesystem tree is presented read-only at the mount point (no
+`ro/`/`rw/` overlay — that's the Unix backend's model); install
+[WinFsp](https://winfsp.dev/) first.
 
 ## Install
 
@@ -224,6 +228,7 @@ You get ro/, rw/, deleted/, journal/, metadata/, session management, and evidenc
 
 ## Test coverage
 
+- **End-to-end mount smoke matrix** (`scripts/smoke/`, CI): every format is mounted and a known file is **read back through the mount** — on both **FUSE (Linux)** and **WinFsp (Windows)**. All 13 formats pass on both backends, enforced on every push.
 - **191 library tests** (216 with the `memory` feature) across FUSE callbacks, inode mapping, session, filter, format detection, and every filesystem/archive/memory backend
 - Each format validated against **real-world data with an independent oracle** (The Sleuth Kit, the OS's own driver, or Volatility) — not a self-encoded round-trip
 - Mock-based FUSE testing with `MockForensicFs`; CLI parsing tests for all argument combinations
