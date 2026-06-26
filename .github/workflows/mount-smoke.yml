@@ -88,6 +88,10 @@ jobs:
           sc.exe start dokan2 2>&1 | Out-Host
           Start-Sleep 3
           Write-Host "Install step complete."
+          # sc.exe "already running" (1056) leaves $LASTEXITCODE non-zero, which
+          # GitHub's pwsh wrapper would propagate as a step failure. Real errors
+          # above use `throw`, so exiting 0 here is safe.
+          exit 0
       - uses: actions/download-artifact@v4
         with:
           name: fixtures
