@@ -27,7 +27,10 @@ pub const FILE_ATTRIBUTE_NORMAL: u32 = 0x0000_0080;
 /// (`MountFlags::WRITE_PROTECT`), so a per-file read-only bit is redundant and
 /// is not set here.
 pub fn windows_attributes(ft: FsFileType) -> u32 {
-    unimplemented!()
+    match ft {
+        FsFileType::Directory => FILE_ATTRIBUTE_DIRECTORY,
+        _ => FILE_ATTRIBUTE_NORMAL,
+    }
 }
 
 /// Convert a Unix `FsTimestamp` to a `SystemTime` (Dokan converts it to a
@@ -35,13 +38,16 @@ pub fn windows_attributes(ft: FsFileType) -> u32 {
 ///
 /// Non-positive seconds (missing/zero timestamps) map to the Unix epoch.
 pub fn to_system_time(ts: FsTimestamp) -> SystemTime {
-    unimplemented!()
+    if ts.seconds <= 0 {
+        return UNIX_EPOCH;
+    }
+    UNIX_EPOCH + Duration::new(ts.seconds as u64, ts.nanoseconds)
 }
 
 /// Split a Windows path (`\dir\file`, also tolerating `/`) into its non-empty
 /// components, for walking `ForensicFs::lookup` from the root.
 pub fn path_components(path: &str) -> Vec<&str> {
-    unimplemented!()
+    path.split(['\\', '/']).filter(|c| !c.is_empty()).collect()
 }
 
 #[cfg(test)]
