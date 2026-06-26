@@ -72,8 +72,12 @@ jobs:
           $p = Start-Process msiexec.exe -ArgumentList '/i','Dokan_x64.msi','/passive','/norestart' -Wait -PassThru
           if (@(0,3010,1641) -notcontains $p.ExitCode) { throw "Dokany install failed: exit $($p.ExitCode)" }
           if (-not (Test-Path "$env:WINDIR\System32\dokan2.dll")) { throw 'Dokany install failed (dokan2.dll missing)' }
-          # Start the driver service so the volume can mount without a reboot.
-          sc.exe start dokan2 2>$null; Start-Sleep 2
+          # The MSI registers and starts the driver; a redundant start reports
+          # 1056 (already running), which is success for us. Don't let that
+          # native non-zero exit fail the step under ErrorActionPreference=Stop.
+          $PSNativeCommandUseErrorActionPreference = $false
+          sc.exe start dokan2 | Out-Null
+          Start-Sleep 2
       - uses: actions/download-artifact@v4
         with:
           name: fixtures
