@@ -1,13 +1,13 @@
 name: mount-smoke
 
 # End-to-end mount smoke tests: mint a fixture per format, mount it, and read a
-# known file back through the mount — on both FUSE (Linux) and WinFsp (Windows).
+# known file back through the mount — on both FUSE (Linux) and Dokan (Windows).
 # Deps resolve from crates.io (all fleet crates are published); a path-strip step
 # drops the local `../sibling` path deps so no sibling checkout is needed.
 
 on:
   push:
-    branches: [main, worktree-winfsp]
+    branches: [main]
   pull_request:
   workflow_dispatch:
 
@@ -57,27 +57,54 @@ jobs:
         shell: pwsh
         run: (Get-Content Cargo.toml) -replace ', path = "[^"]*"','' | Set-Content Cargo.toml
       - uses: dtolnay/rust-toolchain@stable
-      - name: Install WinFsp + LLVM (direct GitHub downloads, fail-loud)
+      - name: Build (default + memory, release)
+        shell: pwsh
+        # dokan-sys self-compiles the Dokany usermode lib from vendored C via
+        # the MSVC toolchain (no bindgen/libclang, no SDK needed), so the build
+        # validates the Dokan port without any runtime install.
+        #
+        # Release (not debug): dokan 0.3.1's OperationInfo::context() builds a
+        # reference from DOKAN_FILE_INFO.Context, which is null when Windows
+        # probes the fresh volume for non-existent paths (autorun.inf, etc.) and
+        # Dokan calls cleanup/close on the failed handle. Rust 1.78+ debug
+        # builds panic on the null-reference creation (inside dokan, before our
+        # no-op handler runs) and abort across the extern "stdcall" boundary.
+        # The shipped binary is release, where that assertion is absent and the
+        # unused null reference is harmless.
+        run: cargo build --release --features memory
+      - name: Install Dokany runtime (driver + dll, for the runtime mount)
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'; $ProgressPreference = 'SilentlyContinue'
-          # WinFsp from the GitHub MSI - the Chocolatey community feed is flaky (504s).
-          Invoke-WebRequest https://github.com/winfsp/winfsp/releases/download/v2.1/winfsp-2.1.25156.msi -OutFile winfsp.msi
-          Start-Process msiexec.exe -ArgumentList '/i','winfsp.msi','/qn' -Wait
-          if (-not (Test-Path 'C:\Program Files (x86)\WinFsp\bin\winfsp-x64.dll')) { throw 'WinFsp install failed' }
-          # LLVM (libclang for winfsp-sys bindgen) from the GitHub release.
-          Invoke-WebRequest https://github.com/llvm/llvm-project/releases/download/llvmorg-22.1.8/LLVM-22.1.8-win64.exe -OutFile llvm.exe
-          Start-Process .\llvm.exe -ArgumentList '/S' -Wait
-          if (-not (Test-Path 'C:\Program Files\LLVM\bin\libclang.dll')) { throw 'LLVM install failed' }
-      - name: Build (default + memory)
-        shell: pwsh
-        env:
-          LIBCLANG_PATH: C:\Program Files\LLVM\bin
-        run: cargo build --features memory
+          $PSNativeCommandUseErrorActionPreference = $false
+          # Dokany (LGPL/MIT) runtime: kernel driver + System32 dokan2.dll.
+          $msi = "$PWD\Dokan_x64.msi"
+          Write-Host "Downloading Dokany MSI..."
+          Invoke-WebRequest https://github.com/dokan-dev/dokany/releases/download/v2.3.0.1000/Dokan_x64.msi -OutFile $msi
+          Write-Host "Downloaded $((Get-Item $msi).Length) bytes; running msiexec /quiet..."
+          $proc = Start-Process msiexec.exe -ArgumentList '/i',"`"$msi`"",'/quiet','/norestart','/l*v','dokan-install.log' -Wait -PassThru
+          $code = if ($null -ne $proc.ExitCode) { $proc.ExitCode } else { 0 }
+          Write-Host "msiexec exit code: $code"
+          if (@(0,3010,1641) -notcontains $code) {
+            if (Test-Path dokan-install.log) { Get-Content dokan-install.log -Tail 40 | Out-Host }
+            throw "Dokany install failed: exit $code"
+          }
+          Write-Host "dokan2.dll present: $(Test-Path "$env:WINDIR\System32\dokan2.dll")"
+          if (-not (Test-Path "$env:WINDIR\System32\dokan2.dll")) { throw 'dokan2.dll missing after install' }
+          # The MSI registers + starts the driver; a redundant start reporting
+          # 1056 (already running) is success for us.
+          sc.exe query dokan2 | Out-Host
+          sc.exe start dokan2 2>&1 | Out-Host
+          Start-Sleep 3
+          Write-Host "Install step complete."
+          # sc.exe "already running" (1056) leaves $LASTEXITCODE non-zero, which
+          # GitHub's pwsh wrapper would propagate as a step failure. Real errors
+          # above use `throw`, so exiting 0 here is safe.
+          exit 0
       - uses: actions/download-artifact@v4
         with:
           name: fixtures
           path: fixtures
-      - name: WinFsp mount smoke
+      - name: Dokan mount smoke
         shell: pwsh
-        run: scripts/smoke/smoke.ps1 -Bin target\debug\4n6mount.exe -Fix fixtures
+        run: scripts/smoke/smoke.ps1 -Bin target\release\4n6mount.exe -Fix fixtures

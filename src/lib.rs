@@ -8,6 +8,7 @@ pub mod fusefs;
 pub mod inode_map;
 pub mod session;
 pub mod types;
+pub mod win_map;
 
 #[cfg(unix)]
 pub mod fuse_unix;
@@ -70,7 +71,7 @@ pub enum MountLayout {
 /// Mount options for the FUSE filesystem.
 ///
 /// Platform-agnostic configuration consumed by both the Unix (fuser)
-/// and Windows (`WinFSP`) mount backends.
+/// and Windows (Dokan) mount backends.
 pub struct MountOptions {
     pub read_only: bool,
     pub daemon: bool,
@@ -276,15 +277,14 @@ pub fn build_memory_fs(
     )))
 }
 
-/// Mount a forensic filesystem via FUSE (or `WinFSP` on Windows).
+/// Mount a forensic filesystem via FUSE (or Dokan on Windows).
 ///
 /// This is the main entry point for consumers.  Pass a `ForensicFs`
 /// implementation and a `MountOptions`, and this dispatches to the
 /// correct platform backend.
 ///
-/// On Unix the mount is handled by `fuser`.  On Windows it will be
-/// handled by `winfsp-wrs` (currently a stub that returns
-/// `Unsupported`).
+/// On Unix the mount is handled by `fuser`.  On Windows it is handled
+/// by Dokan (the MIT `dokan` crate).
 pub fn mount(
     fs: Box<dyn ForensicFs + Send>,
     mountpoint: &Path,

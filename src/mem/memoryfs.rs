@@ -319,11 +319,7 @@ pub(crate) struct ProcRow {
 pub(crate) fn render_process_table(rows: &[ProcRow]) -> String {
     let mut out = String::from("PID\tPPID\tCREATE_TIME\tNAME\n");
     for r in rows {
-        let _ = writeln!(
-            out,
-            "{}\t{}\t{}\t{}",
-            r.pid, r.ppid, r.create_time, r.name
-        );
+        let _ = writeln!(out, "{}\t{}\t{}\t{}", r.pid, r.ppid, r.create_time, r.name);
     }
     out
 }

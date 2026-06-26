@@ -2,7 +2,7 @@
 name = "forensic-mount"
 version = "0.3.0"
 edition = "2021"
-rust-version = "1.85"
+rust-version = "1.88"
 description = "Mount forensic disk images, archives, and memory dumps as a filesystem on Linux, macOS, and Windows — ext4/NTFS/exFAT/HFS+/APFS/ISO, EWF/VMDK containers, zip/7z/tar, LiME/AVML/crash dumps"
 license = "Apache-2.0"
 repository = "https://github.com/SecurityRonin/4n6mount"
@@ -17,6 +17,12 @@ exclude = ["tests/data/*", "scripts/smoke/*", ".github/*", "fuzz/*"]
 [[bin]]
 name = "4n6mount"
 path = "src/main.rs"
+
+# Synthetic crash-dump generator for the memory mount-smoke; needs the memory
+# feature's memf-format builders, so it is skipped under default features.
+[[example]]
+name = "mkdump"
+required-features = ["memory"]
 
 [features]
 default = ["ext4", "ewf", "iso", "vmdk", "tarball", "zip", "sevenz", "ntfs", "hfsplus", "exfat", "apfs"]
@@ -62,17 +68,18 @@ zip = { version = "2", optional = true }
 sevenz-rust = { version = "0.6", optional = true }
 
 # FUSE backend is Unix-only (libfuse / macFUSE). On Windows the mount layer uses
-# WinFsp instead (see the windows target table below).
+# Dokan instead (see the windows target table below).
 [target.'cfg(unix)'.dependencies]
 fuser = "0.15"
 
-# WinFsp mount backend — Windows only. `winfsp` wraps the native WinFsp 2.x
-# runtime; `widestring`/`windows-sys` provide the UTF-16 + Win32 attribute types
-# the FileSystemContext trait uses.
 [target.'cfg(windows)'.dependencies]
-winfsp = "0.12"
-widestring = "1"
-windows-sys = { version = "0.59", features = ["Win32_Storage_FileSystem", "Win32_Foundation"] }
+# Dokan (MIT) Rust bindings for Windows user-mode filesystem mounting. The
+# Dokany runtime (dual LGPL/MIT) is installed separately, like FUSE on Unix, so
+# only MIT code enters the dependency graph.
+dokan = "0.3"
+# Must match the widestring version dokan re-exports in its trait signatures
+# (dokan 0.3.1 uses widestring 0.4); a 1.x here is a distinct, incompatible type.
+widestring = "0.4"
 
 [lints.rust]
 unsafe_code = "forbid"

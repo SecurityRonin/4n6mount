@@ -460,7 +460,7 @@ mod tests {
 
     #[test]
     fn detect_mem_none_for_non_dump() {
-        let mut data = vec![0u8; 64];
+        let data = vec![0u8; 64];
         assert_eq!(detect_memory_dump(&mut Cursor::new(data)).unwrap(), None);
     }
 

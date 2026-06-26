@@ -1,260 +1,267 @@
 #![forbid(unsafe_code)]
 
-//! Windows mount backend via WinFsp (the `winfsp` crate, WinFsp 2.x).
+//! Windows mount backend via Dokan (the MIT-licensed `dokan` crate, Dokany 2.x).
 //!
-//! Maps the platform-agnostic [`ForensicFs`] tree onto WinFsp's
-//! [`FileSystemContext`] trait, presenting the filesystem **read-only** at the
-//! mount point. WinFsp addresses files by path (`\dir\file`), so each callback
-//! resolves a path to a `ForensicFs` inode by walking `lookup` from the root;
-//! the inode is the WinFsp file context.
+//! Maps the platform-agnostic [`ForensicFs`] tree onto Dokan's
+//! [`FileSystemHandler`] trait, presenting the filesystem **read-only** at the
+//! mount point. The volume is mounted with [`MountFlags::WRITE_PROTECT`], so the
+//! Dokan kernel driver rejects writes before they ever reach this code — the
+//! mount cannot modify evidence. Dokan addresses files by path (`\dir\file`),
+//! so each callback resolves a path to a `ForensicFs` inode by walking
+//! [`ForensicFs::lookup`] from the root; the inode is the per-handle file
+//! context.
+//!
+//! This module is the thin FFI shell (a Humble Object): every testable decision
+//! — path splitting, attribute and timestamp mapping — lives in the
+//! cross-platform [`crate::win_map`] module and is unit-tested there. The shell
+//! is validated end-to-end by the Dokan mount-smoke test.
 //!
 //! This is the read-only MVP: it surfaces the `ForensicFs` tree directly (the
 //! `ro/`/`rw/`/`deleted/` overlay parity of the Unix backend is future work).
-//! Writes are rejected — the trait's mutating methods keep their default
-//! `STATUS_INVALID_DEVICE_REQUEST`, so the mount cannot modify evidence.
 
 use std::sync::Mutex;
 
-use widestring::U16CStr;
-use windows_sys::Win32::Storage::FileSystem::{
-    FILE_ACCESS_RIGHTS, FILE_ATTRIBUTE_DIRECTORY, FILE_ATTRIBUTE_NORMAL, FILE_FLAGS_AND_ATTRIBUTES,
+use dokan::{
+    init, shutdown, CreateFileInfo, DiskSpaceInfo, FileInfo, FileSystemHandler, FileSystemMounter,
+    FillDataError, FillDataResult, FindData, MountFlags, MountOptions as DokanMountOptions,
+    OperationInfo, OperationResult, VolumeInfo, IO_SECURITY_CONTEXT,
 };
-use winfsp::filesystem::{
-    DirBuffer, DirInfo, DirMarker, FileInfo, FileSecurity, FileSystemContext, OpenFileInfo,
-    VolumeInfo, WideNameInfo,
-};
-use winfsp::host::{FileSystemHost, VolumeParams};
-use winfsp::winfsp_init_or_die;
-use winfsp::FspError;
+use widestring::{U16CStr, U16CString};
 
 use crate::session::Session;
-use crate::{ForensicFs, FsFileType, FsMetadata, FsTimestamp, MountOptions};
+use crate::win_map::{path_components, to_system_time, windows_attributes};
+use crate::{ForensicFs, FsFileType, FsMetadata, MountOptions};
 
+// NTSTATUS codes returned to Dokan (NTSTATUS is a plain i32). Defined locally to
+// avoid pulling in a Windows binding crate for three constants.
 /// `STATUS_OBJECT_NAME_NOT_FOUND` — the file/path does not exist.
 const STATUS_OBJECT_NAME_NOT_FOUND: i32 = 0xC000_0034u32 as i32;
-/// `STATUS_IO_DEVICE_ERROR` — an underlying read/parse failed.
-const STATUS_IO_DEVICE_ERROR: i32 = 0xC000_0185u32 as i32;
+/// `STATUS_INVALID_DEVICE_REQUEST` — an underlying read/parse/lock failed.
+const STATUS_INVALID_DEVICE_REQUEST: i32 = 0xC000_0010u32 as i32;
+/// `STATUS_BUFFER_OVERFLOW` — the directory fill buffer is full.
+const STATUS_BUFFER_OVERFLOW: i32 = 0x8000_0005u32 as i32;
 
-/// 100-ns intervals between the Windows FILETIME epoch (1601) and Unix (1970).
-const FILETIME_UNIX_OFFSET: u64 = 11_644_473_600;
+// Volume flags advertised in `get_volume_information`. `FILE_READ_ONLY_VOLUME`
+// is added automatically by Dokan because the volume uses `WRITE_PROTECT`.
+const FILE_CASE_SENSITIVE_SEARCH: u32 = 0x0000_0001;
+const FILE_CASE_PRESERVED_NAMES: u32 = 0x0000_0002;
+const FILE_UNICODE_ON_DISK: u32 = 0x0000_0004;
 
-fn not_found() -> FspError {
-    FspError::NTSTATUS(STATUS_OBJECT_NAME_NOT_FOUND)
+fn lock_failed() -> i32 {
+    STATUS_INVALID_DEVICE_REQUEST
 }
 
-fn io_error() -> FspError {
-    FspError::NTSTATUS(STATUS_IO_DEVICE_ERROR)
-}
-
-/// Convert a Unix `FsTimestamp` to a Windows FILETIME (100-ns since 1601).
-fn to_filetime(ts: FsTimestamp) -> u64 {
-    if ts.seconds <= 0 {
-        return 0;
-    }
-    (ts.seconds as u64 + FILETIME_UNIX_OFFSET) * 10_000_000 + u64::from(ts.nanoseconds) / 100
-}
-
-/// Windows file attributes for a `ForensicFs` file type.
-fn attributes(ft: FsFileType) -> FILE_FLAGS_AND_ATTRIBUTES {
-    match ft {
-        FsFileType::Directory => FILE_ATTRIBUTE_DIRECTORY,
-        _ => FILE_ATTRIBUTE_NORMAL,
-    }
-}
-
-/// A read-only WinFsp view over a `ForensicFs`.
-pub struct WinForensicFs {
+/// A read-only Dokan view over a `ForensicFs`.
+pub struct DokanForensicFs {
     fs: Mutex<Box<dyn ForensicFs + Send>>,
     root_ino: u64,
+    label: U16CString,
 }
 
-impl WinForensicFs {
-    fn new(fs: Box<dyn ForensicFs + Send>) -> Self {
+impl DokanForensicFs {
+    fn new(fs: Box<dyn ForensicFs + Send>, label: &str) -> Self {
         let root_ino = fs.root_ino();
         Self {
             fs: Mutex::new(fs),
             root_ino,
+            label: U16CString::from_str(label).unwrap_or_default(),
         }
     }
 
-    /// Resolve a WinFsp path (`\a\b`) to a `ForensicFs` inode by walking
+    /// Resolve a Dokan path (`\a\b`) to a `ForensicFs` inode by walking
     /// `lookup` from the root. Returns `None` if any component is missing.
     fn resolve(&self, path: &U16CStr) -> Option<u64> {
         let path = path.to_string_lossy();
         let mut ino = self.root_ino;
         let mut fs = self.fs.lock().ok()?;
-        for comp in path.split(['\\', '/']).filter(|c| !c.is_empty()) {
+        for comp in path_components(&path) {
             ino = fs.lookup(ino, comp.as_bytes()).ok().flatten()?;
         }
         Some(ino)
     }
 
-    /// Populate a WinFsp `FileInfo` from `ForensicFs` metadata.
-    fn fill(&self, ino: u64, fi: &mut FileInfo) -> Result<(), FspError> {
-        let meta: FsMetadata = {
-            let mut fs = self.fs.lock().map_err(|_| io_error())?;
-            fs.metadata(ino).map_err(|_| not_found())?
-        };
-        fi.file_attributes = attributes(meta.file_type);
-        fi.file_size = meta.size;
-        // Round allocation up to a 4 KiB cluster, mirroring a real volume.
-        fi.allocation_size = meta.size.div_ceil(4096) * 4096;
-        fi.creation_time = to_filetime(meta.crtime);
-        fi.last_access_time = to_filetime(meta.atime);
-        fi.last_write_time = to_filetime(meta.mtime);
-        fi.change_time = to_filetime(meta.ctime);
-        fi.index_number = ino;
-        Ok(())
+    fn metadata(&self, ino: u64) -> OperationResult<FsMetadata> {
+        let mut fs = self.fs.lock().map_err(|_| lock_failed())?;
+        fs.metadata(ino).map_err(|_| STATUS_OBJECT_NAME_NOT_FOUND)
     }
 }
 
-/// WinFsp per-handle file context: the resolved inode plus a directory buffer.
-/// WinFsp's model fills the buffer once (the initial, marker-less `read_directory`
-/// call) and re-reads it for subsequent paginated calls.
-pub struct WinFile {
-    ino: u64,
-    dir_buffer: DirBuffer,
+/// Build a Dokan `FileInfo` from `ForensicFs` metadata.
+fn file_info(meta: &FsMetadata, ino: u64) -> FileInfo {
+    FileInfo {
+        attributes: windows_attributes(meta.file_type),
+        creation_time: to_system_time(meta.crtime),
+        last_access_time: to_system_time(meta.atime),
+        last_write_time: to_system_time(meta.mtime),
+        file_size: meta.size,
+        number_of_links: u32::from(meta.links_count).max(1),
+        file_index: ino,
+    }
 }
 
-impl FileSystemContext for WinForensicFs {
-    type FileContext = WinFile;
+impl<'c, 'h: 'c> FileSystemHandler<'c, 'h> for DokanForensicFs {
+    /// The per-handle context is the resolved inode.
+    type Context = u64;
 
-    fn get_security_by_name(
-        &self,
+    #[allow(clippy::too_many_arguments)]
+    fn create_file(
+        &'h self,
         file_name: &U16CStr,
-        _security_descriptor: Option<&mut [std::ffi::c_void]>,
-        _reparse_point_resolver: impl FnOnce(&U16CStr) -> Option<FileSecurity>,
-    ) -> Result<FileSecurity, FspError> {
-        let ino = self.resolve(file_name).ok_or_else(not_found)?;
-        let meta = {
-            let mut fs = self.fs.lock().map_err(|_| io_error())?;
-            fs.metadata(ino).map_err(|_| not_found())?
-        };
-        Ok(FileSecurity {
-            reparse: false,
-            // No ACLs are surfaced (persistent_acls is off); the descriptor is empty.
-            sz_security_descriptor: 0,
-            attributes: attributes(meta.file_type),
-        })
-    }
-
-    fn open(
-        &self,
-        file_name: &U16CStr,
+        _security_context: &IO_SECURITY_CONTEXT,
+        _desired_access: u32,
+        _file_attributes: u32,
+        _share_access: u32,
+        _create_disposition: u32,
         _create_options: u32,
-        _granted_access: FILE_ACCESS_RIGHTS,
-        file_info: &mut OpenFileInfo,
-    ) -> Result<Self::FileContext, FspError> {
-        let ino = self.resolve(file_name).ok_or_else(not_found)?;
-        self.fill(ino, file_info.as_mut())?;
-        Ok(WinFile {
-            ino,
-            dir_buffer: DirBuffer::default(),
+        _info: &mut OperationInfo<'c, 'h, Self>,
+    ) -> OperationResult<CreateFileInfo<Self::Context>> {
+        let ino = self
+            .resolve(file_name)
+            .ok_or(STATUS_OBJECT_NAME_NOT_FOUND)?;
+        let meta = self.metadata(ino)?;
+        Ok(CreateFileInfo {
+            context: ino,
+            is_dir: matches!(meta.file_type, FsFileType::Directory),
+            new_file_created: false,
         })
     }
 
-    fn close(&self, _context: Self::FileContext) {}
-
-    fn get_file_info(
-        &self,
-        context: &Self::FileContext,
-        file_info: &mut FileInfo,
-    ) -> Result<(), FspError> {
-        self.fill(context.ino, file_info)
+    fn close_file(
+        &'h self,
+        _file_name: &U16CStr,
+        _info: &OperationInfo<'c, 'h, Self>,
+        _context: &'c Self::Context,
+    ) {
     }
 
-    fn read(
-        &self,
-        context: &Self::FileContext,
+    fn read_file(
+        &'h self,
+        _file_name: &U16CStr,
+        offset: i64,
         buffer: &mut [u8],
-        offset: u64,
-    ) -> Result<u32, FspError> {
+        _info: &OperationInfo<'c, 'h, Self>,
+        context: &'c Self::Context,
+    ) -> OperationResult<u32> {
         let data = {
-            let mut fs = self.fs.lock().map_err(|_| io_error())?;
-            fs.read_file_range(context.ino, offset, buffer.len() as u64)
-                .map_err(|_| io_error())?
+            let mut fs = self.fs.lock().map_err(|_| lock_failed())?;
+            fs.read_file_range(*context, offset.max(0) as u64, buffer.len() as u64)
+                .map_err(|_| STATUS_INVALID_DEVICE_REQUEST)?
         };
         let n = data.len().min(buffer.len());
         buffer[..n].copy_from_slice(&data[..n]);
         Ok(n as u32)
     }
 
-    fn read_directory(
-        &self,
-        context: &Self::FileContext,
-        _pattern: Option<&U16CStr>,
-        marker: DirMarker,
-        buffer: &mut [u8],
-    ) -> Result<u32, FspError> {
-        // Populate the per-handle directory buffer once (on the initial,
-        // marker-less call — `acquire(reset, _)` returns Ok only when a fill is
-        // needed); WinFsp re-reads the buffer for subsequent paginated calls.
-        if let Ok(lock) = context.dir_buffer.acquire(marker.is_none(), None) {
-            let mut entries: Vec<(String, u64)> = {
-                let mut fs = self.fs.lock().map_err(|_| io_error())?;
-                fs.read_dir(context.ino)
-                    .map_err(|_| io_error())?
-                    .into_iter()
-                    .filter(|e| e.name != b"." && e.name != b"..")
-                    .map(|e| (String::from_utf8_lossy(&e.name).into_owned(), e.inode))
-                    .collect()
-            };
-            // Stable order for deterministic, resumable listing.
-            entries.sort_by(|a, b| a.0.cmp(&b.0));
-            for (name, ino) in entries {
-                let mut dir_info: DirInfo<255> = DirInfo::new();
-                if self.fill(ino, dir_info.file_info_mut()).is_err() {
-                    continue;
-                }
-                dir_info.set_name(name.as_str())?;
-                lock.write(&mut dir_info)?;
-            }
-        }
-        Ok(context.dir_buffer.read(marker, buffer))
+    fn get_file_information(
+        &'h self,
+        _file_name: &U16CStr,
+        _info: &OperationInfo<'c, 'h, Self>,
+        context: &'c Self::Context,
+    ) -> OperationResult<FileInfo> {
+        let meta = self.metadata(*context)?;
+        Ok(file_info(&meta, *context))
     }
 
-    fn get_volume_info(&self, out: &mut VolumeInfo) -> Result<(), FspError> {
-        // Size is informational for a read-only forensic view; report no free
-        // space (the volume cannot be written).
-        out.total_size = 0;
-        out.free_size = 0;
+    fn find_files(
+        &'h self,
+        _file_name: &U16CStr,
+        mut fill_find_data: impl FnMut(&FindData) -> FillDataResult,
+        _info: &OperationInfo<'c, 'h, Self>,
+        context: &'c Self::Context,
+    ) -> OperationResult<()> {
+        let mut entries = {
+            let mut fs = self.fs.lock().map_err(|_| lock_failed())?;
+            fs.read_dir(*context)
+                .map_err(|_| STATUS_INVALID_DEVICE_REQUEST)?
+        };
+        // Stable order for a deterministic listing.
+        entries.sort_by(|a, b| a.name.cmp(&b.name));
+        for e in entries {
+            if e.name == b"." || e.name == b".." {
+                continue;
+            }
+            let Ok(meta) = self.metadata(e.inode) else {
+                continue;
+            };
+            let Ok(name) = U16CString::from_str(String::from_utf8_lossy(&e.name)) else {
+                continue;
+            };
+            let find = FindData {
+                attributes: windows_attributes(meta.file_type),
+                creation_time: to_system_time(meta.crtime),
+                last_access_time: to_system_time(meta.atime),
+                last_write_time: to_system_time(meta.mtime),
+                file_size: meta.size,
+                file_name: name,
+            };
+            match fill_find_data(&find) {
+                Ok(()) => {}
+                // A single over-long name shouldn't make the whole dir unreadable.
+                Err(FillDataError::NameTooLong) => continue,
+                Err(FillDataError::BufferFull) => return Err(STATUS_BUFFER_OVERFLOW),
+            }
+        }
         Ok(())
+    }
+
+    fn get_disk_free_space(
+        &'h self,
+        _info: &OperationInfo<'c, 'h, Self>,
+    ) -> OperationResult<DiskSpaceInfo> {
+        // Read-only forensic view: the volume cannot be written, so report no
+        // free space.
+        Ok(DiskSpaceInfo {
+            byte_count: 0,
+            free_byte_count: 0,
+            available_byte_count: 0,
+        })
+    }
+
+    fn get_volume_information(
+        &'h self,
+        _info: &OperationInfo<'c, 'h, Self>,
+    ) -> OperationResult<VolumeInfo> {
+        Ok(VolumeInfo {
+            name: self.label.clone(),
+            serial_number: 0,
+            max_component_length: 255,
+            fs_flags: FILE_CASE_SENSITIVE_SEARCH | FILE_CASE_PRESERVED_NAMES | FILE_UNICODE_ON_DISK,
+            // Windows gates feature availability on the FS name; "NTFS" is the
+            // safe, well-known choice (custom names interact poorly with UAC).
+            fs_name: U16CString::from_str("NTFS").unwrap_or_default(),
+        })
     }
 }
 
-/// Mount a `ForensicFs` via WinFsp at `mountpoint` (a drive letter `X:` or a
-/// directory). Read-only; `session` is unused (no rw overlay on Windows yet).
+/// Mount a `ForensicFs` via Dokan at `mountpoint` (a drive letter `X:` or a
+/// directory on an NTFS volume). Read-only; `session` is unused (no rw overlay
+/// on Windows yet). Blocks until the volume is unmounted.
 pub fn mount_windows(
     fs: Box<dyn ForensicFs + Send>,
     mountpoint: &std::path::Path,
     _session: Option<Session>,
     options: &MountOptions,
 ) -> std::io::Result<()> {
-    let _init = winfsp_init_or_die();
+    let mount_point = U16CString::from_os_str(mountpoint.as_os_str())
+        .map_err(|e| std::io::Error::other(format!("invalid mount point: {e}")))?;
 
-    let mut volume_params = VolumeParams::new();
-    volume_params
-        .sector_size(4096)
-        .sectors_per_allocation_unit(1)
-        .case_sensitive_search(true)
-        .case_preserved_names(true)
-        .unicode_on_disk(true)
-        .persistent_acls(false)
-        .filesystem_name(&options.fs_name);
+    let handler = DokanForensicFs::new(fs, &options.fs_name);
 
-    let context = WinForensicFs::new(fs);
-    let mut host = FileSystemHost::new(volume_params, context)
-        .map_err(|e| std::io::Error::other(format!("WinFsp host: {e:?}")))?;
-    host.mount(mountpoint.as_os_str())
-        .map_err(|e| std::io::Error::other(format!("WinFsp mount: {e:?}")))?;
-    host.start()
-        .map_err(|e| std::io::Error::other(format!("WinFsp start: {e:?}")))?;
-    eprintln!("4n6mount: mounted at {} (WinFsp)", mountpoint.display());
+    let dokan_options = DokanMountOptions {
+        flags: MountFlags::WRITE_PROTECT,
+        ..Default::default()
+    };
 
-    // `start()` runs the dispatcher on its own threads and returns. Keep this
-    // thread (and therefore `host`, whose Drop unmounts) alive indefinitely;
-    // `park()` can wake spuriously, so block on a long sleep loop instead.
-    loop {
-        std::thread::sleep(std::time::Duration::from_secs(3600));
-    }
+    init();
+    let mut mounter = FileSystemMounter::new(&handler, &mount_point, &dokan_options);
+    let file_system = mounter
+        .mount()
+        .map_err(|e| std::io::Error::other(format!("Dokan mount: {e}")))?;
+    eprintln!("4n6mount: mounted at {} (Dokan)", mountpoint.display());
+
+    // `FileSystem`'s Drop blocks until the volume is unmounted (e.g. via
+    // `dokanctl /u <mountpoint>`); holding it keeps the mount alive.
+    drop(file_system);
+    shutdown();
+    Ok(())
 }
