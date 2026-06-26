@@ -50,6 +50,7 @@ impl std::str::FromStr for FsType {
             "hfsplus" | "hfs+" | "hfsx" => Ok(FsType::Hfsplus),
             "apfs" => Ok(FsType::Apfs),
             "ewf" | "e01" => Ok(FsType::Ewf),
+            "vmdk" => Ok(FsType::Vmdk),
             "iso" | "iso9660" | "cd" | "udf" => Ok(FsType::Iso),
             "zip" => Ok(FsType::Zip),
             "7z" | "sevenz" | "7zip" => Ok(FsType::SevenZ),

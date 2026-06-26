@@ -57,11 +57,18 @@ jobs:
         shell: pwsh
         run: (Get-Content Cargo.toml) -replace ', path = "[^"]*"','' | Set-Content Cargo.toml
       - uses: dtolnay/rust-toolchain@stable
-      - name: Install WinFsp + LLVM
+      - name: Install WinFsp + LLVM (direct GitHub downloads, fail-loud)
         shell: pwsh
         run: |
-          choco install winfsp -y --no-progress
-          choco install llvm -y --no-progress
+          $ErrorActionPreference = 'Stop'; $ProgressPreference = 'SilentlyContinue'
+          # WinFsp from the GitHub MSI - the Chocolatey community feed is flaky (504s).
+          Invoke-WebRequest https://github.com/winfsp/winfsp/releases/download/v2.1/winfsp-2.1.25156.msi -OutFile winfsp.msi
+          Start-Process msiexec.exe -ArgumentList '/i','winfsp.msi','/qn' -Wait
+          if (-not (Test-Path 'C:\Program Files (x86)\WinFsp\bin\winfsp-x64.dll')) { throw 'WinFsp install failed' }
+          # LLVM (libclang for winfsp-sys bindgen) from the GitHub release.
+          Invoke-WebRequest https://github.com/llvm/llvm-project/releases/download/llvmorg-22.1.8/LLVM-22.1.8-win64.exe -OutFile llvm.exe
+          Start-Process .\llvm.exe -ArgumentList '/S' -Wait
+          if (-not (Test-Path 'C:\Program Files\LLVM\bin\libclang.dll')) { throw 'LLVM install failed' }
       - name: Build (default + memory)
         shell: pwsh
         env:
