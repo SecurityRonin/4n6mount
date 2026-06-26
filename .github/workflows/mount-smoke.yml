@@ -1,0 +1,74 @@
+name: mount-smoke
+
+# End-to-end mount smoke tests: mint a fixture per format, mount it, and read a
+# known file back through the mount — on both FUSE (Linux) and WinFsp (Windows).
+# Deps resolve from crates.io (all fleet crates are published); a path-strip step
+# drops the local `../sibling` path deps so no sibling checkout is needed.
+
+on:
+  push:
+    branches: [main, worktree-winfsp]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  gen-fixtures:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - name: Install format tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y zip p7zip-full genisoimage ntfs-3g libewf-tools qemu-utils e2fsprogs
+      - name: Mint fixtures
+        run: bash scripts/smoke/gen-fixtures.sh fixtures
+      - uses: actions/upload-artifact@v4
+        with:
+          name: fixtures
+          path: fixtures/
+
+  smoke-linux:
+    needs: gen-fixtures
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - name: Use crates.io for fleet deps (drop local path deps)
+        run: sed -i -E 's/, path = "[^"]*"//' Cargo.toml
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Install FUSE
+        run: sudo apt-get update && sudo apt-get install -y fuse3 libfuse3-dev
+      - name: Build (default + memory)
+        run: cargo build --features memory
+      - uses: actions/download-artifact@v4
+        with:
+          name: fixtures
+          path: fixtures
+      - name: FUSE mount smoke
+        run: bash scripts/smoke/smoke.sh target/debug/4n6mount fixtures
+
+  smoke-windows:
+    needs: gen-fixtures
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - name: Use crates.io for fleet deps (drop local path deps)
+        shell: pwsh
+        run: (Get-Content Cargo.toml) -replace ', path = "[^"]*"','' | Set-Content Cargo.toml
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Install WinFsp + LLVM
+        shell: pwsh
+        run: |
+          choco install winfsp -y --no-progress
+          choco install llvm -y --no-progress
+      - name: Build (default + memory)
+        shell: pwsh
+        env:
+          LIBCLANG_PATH: C:\Program Files\LLVM\bin
+        run: cargo build --features memory
+      - uses: actions/download-artifact@v4
+        with:
+          name: fixtures
+          path: fixtures
+      - name: WinFsp mount smoke
+        shell: pwsh
+        run: scripts/smoke/smoke.ps1 -Bin target\debug\4n6mount.exe -Fix fixtures

@@ -56,3 +56,26 @@ self-licensed fixtures are committed with their md5 below.
 - **Archives (zip / tar.gz / 7z):** minted at test time with the system
   `zip` / `tar` / `7z` CLIs (independent oracles); tests skip if a tool is
   missing.
+
+### `apfs.img`
+
+- **Source / Identity:** a 2 MiB APFS container minted locally on macOS with
+  Apple's own tooling — `hdiutil create -size 2m -fs APFS`, populated by the
+  macOS APFS driver, flattened (`hdiutil convert -format UDTO`) and the APFS
+  partition carved out (`dd skip=40`).
+- **Authoring engine = independent oracle:** bytes written by Apple's APFS
+  implementation.
+- **Contents:** `hello.txt` (`"hello from apfs\n"`) and `sub/deep.txt`.
+- **Used by:** the mount smoke matrix (`scripts/smoke/manifest.tsv`, `apfs` row).
+- **License:** CC0 / public-domain — synthetic, authored here.
+
+### `crash.dmp`
+
+- **Source / Identity:** an 8 KiB synthetic Windows kernel crash dump (PAGEDU64)
+  produced by `cargo run --features memory --example mkdump` (memf's
+  `CrashDumpBuilder`). Tier-3 (self-authored) — exercises the memory-mount
+  plumbing only; real-dump forensic parity is covered by env-gated corpora.
+- **Contents:** a minimal header (CR3 + machine type) so the analysis bootstrap
+  resolves OS = Windows; `sys/os-info.txt` renders the profile.
+- **Used by:** the mount smoke matrix (`memory` row).
+- **License:** CC0 / public-domain — synthetic, authored here.
