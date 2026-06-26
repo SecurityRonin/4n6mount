@@ -283,9 +283,8 @@ pub fn build_memory_fs(
 /// implementation and a `MountOptions`, and this dispatches to the
 /// correct platform backend.
 ///
-/// On Unix the mount is handled by `fuser`.  On Windows it will be
-/// handled by `winfsp-wrs` (currently a stub that returns
-/// `Unsupported`).
+/// On Unix the mount is handled by `fuser`.  On Windows it is handled
+/// by Dokan (the MIT `dokan` crate).
 pub fn mount(
     fs: Box<dyn ForensicFs + Send>,
     mountpoint: &Path,

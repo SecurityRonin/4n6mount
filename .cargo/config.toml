@@ -1,8 +1,8 @@
 # Statically link the MSVC C runtime on Windows so the binary has no
 # vcruntime140.dll / msvcp140.dll dependency on the target machine (important
 # for a portable forensic tool, and for x64 binaries running under ARM64
-# Windows emulation where the x64 VC runtime may be absent). WinFsp's own DLL
-# (winfsp-x64.dll) is still required at runtime — install WinFsp on the target.
+# Windows emulation where the x64 VC runtime may be absent). The Dokan runtime
+# DLL is still required at runtime — install the Dokany library on the target.
 [target.x86_64-pc-windows-msvc]
 rustflags = ["-C", "target-feature=+crt-static"]
 

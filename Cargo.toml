@@ -70,9 +70,11 @@ fuser = "0.15"
 # runtime; `widestring`/`windows-sys` provide the UTF-16 + Win32 attribute types
 # the FileSystemContext trait uses.
 [target.'cfg(windows)'.dependencies]
-winfsp = "0.12"
+# Dokan (MIT) Rust bindings for Windows user-mode filesystem mounting. The
+# Dokany runtime (dual LGPL/MIT) is installed separately, like FUSE on Unix, so
+# only MIT code enters the dependency graph.
+dokan = "0.3"
 widestring = "1"
-windows-sys = { version = "0.59", features = ["Win32_Storage_FileSystem", "Win32_Foundation"] }
 
 [lints.rust]
 unsafe_code = "forbid"
