@@ -1,6 +1,6 @@
 [package]
 name = "forensic-mount"
-version = "0.3.0"
+version = "0.4.0"
 edition = "2021"
 rust-version = "1.88"
 description = "Mount forensic disk images, archives, and memory dumps as a filesystem on Linux, macOS, and Windows — ext4/NTFS/exFAT/HFS+/APFS/ISO, EWF/VMDK containers, zip/7z/tar, LiME/AVML/crash dumps"
