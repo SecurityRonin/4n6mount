@@ -19,7 +19,7 @@ jobs:
       - name: Install format tools
         run: |
           sudo apt-get update
-          sudo apt-get install -y zip p7zip-full genisoimage ntfs-3g libewf-tools qemu-utils e2fsprogs
+          sudo apt-get install -y zip p7zip-full genisoimage ntfs-3g ewf-tools qemu-utils e2fsprogs
       - name: Mint fixtures
         run: bash scripts/smoke/gen-fixtures.sh fixtures
       - uses: actions/upload-artifact@v4

@@ -27,7 +27,7 @@ mktree() { # $1=dir  $2=hello-content
 
 # --- archives (real zip/7z/tar) ---
 mktree "$W/zip"  "hello from zip";    ( cd "$W/zip"  && zip -qr "$OUT/test.zip" . )
-mktree "$W/7z"   "hello from sevenz"; 7z a -bso0 -bsp0 "$OUT/test.7z" "$W/7z/." >/dev/null
+mktree "$W/7z"   "hello from sevenz"; 7za a "$OUT/test.7z" "$W/7z/." >/dev/null
 mktree "$W/gz"   "hello from targz";  tar czf "$OUT/test.tar.gz"  -C "$W/gz" .
 mktree "$W/bz"   "hello from tarbz2"; tar cjf "$OUT/test.tar.bz2" -C "$W/bz" .
 
