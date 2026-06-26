@@ -18,6 +18,12 @@ exclude = ["tests/data/*", "scripts/smoke/*", ".github/*", "fuzz/*"]
 name = "4n6mount"
 path = "src/main.rs"
 
+# Synthetic crash-dump generator for the memory mount-smoke; needs the memory
+# feature's memf-format builders, so it is skipped under default features.
+[[example]]
+name = "mkdump"
+required-features = ["memory"]
+
 [features]
 default = ["ext4", "ewf", "iso", "vmdk", "tarball", "zip", "sevenz", "ntfs", "hfsplus", "exfat", "apfs"]
 ext4 = ["dep:ext4fs"]
