@@ -77,7 +77,9 @@ fuser = "0.15"
 # Dokany runtime (dual LGPL/MIT) is installed separately, like FUSE on Unix, so
 # only MIT code enters the dependency graph.
 dokan = "0.3"
-widestring = "1"
+# Must match the widestring version dokan re-exports in its trait signatures
+# (dokan 0.3.1 uses widestring 0.4); a 1.x here is a distinct, incompatible type.
+widestring = "0.4"
 
 [lints.rust]
 unsafe_code = "forbid"
