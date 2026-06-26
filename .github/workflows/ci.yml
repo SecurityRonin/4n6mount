@@ -10,13 +10,13 @@ env:
   CARGO_TERM_COLOR: always
   RUSTFLAGS: -Dwarnings
 
-# Every job that runs `cargo metadata` (clippy, test, msrv, deny, geiger) must
-# resolve this crate's path dependencies. The closure is:
-# forensic-mount(4n6mount) -> {ext4fs-core, ewf, iso9660-forensic, vmdk-core};
-# ext4fs-core -> ewf. actions/checkout cannot place a repo outside
-# $GITHUB_WORKSPACE, so we check this repo out under `path: 4n6mount` and the
-# siblings as peer subdirs, matching the `../sibling` relative paths in the
-# manifests, then run cargo with `working-directory: 4n6mount`.
+# Every job that resolves dependencies (clippy, test, msrv, deny, geiger) needs
+# this crate's fleet path dependencies. Rather than check each sibling repo out
+# at the matching `../sibling` location -- a list that silently goes stale every
+# time a format is added -- we strip the `path = "..."` keys so Cargo resolves
+# the fleet crates from crates.io (all are published). The committed Cargo.lock
+# is path-based for local dev, so `--locked` is dropped here; CI exercises the
+# published-dependency graph instead.
 # The `fuser` crate links libfuse at build time, so build jobs install
 # libfuse3-dev + pkg-config.
 
@@ -26,13 +26,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
-        with:
-          path: 4n6mount
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt
       - run: cargo fmt --check
-        working-directory: 4n6mount
 
   clippy:
     name: Clippy
@@ -40,30 +37,13 @@ jobs:
     steps:
       - run: sudo apt-get update && sudo apt-get install -y libfuse3-dev pkg-config
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
-        with:
-          path: 4n6mount
-      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
-        with:
-          repository: ${{ github.repository_owner }}/ext4fs-forensic
-          path: ext4fs-forensic
-      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
-        with:
-          repository: ${{ github.repository_owner }}/ewf
-          path: ewf
-      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
-        with:
-          repository: ${{ github.repository_owner }}/iso9660-forensic
-          path: iso9660-forensic
-      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
-        with:
-          repository: ${{ github.repository_owner }}/vmdk-forensic
-          path: vmdk-forensic
+      - name: Use crates.io for fleet deps (drop local path deps)
+        run: sed -i -E 's/, path = "[^"]*"//' Cargo.toml
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy
       - uses: Swatinem/rust-cache@9d47c6ad4b02e050fd481d890b2ea34778fd09d6 # v2.7.8
-      - run: cargo clippy --all-targets --locked -- -D warnings
-        working-directory: 4n6mount
+      - run: cargo clippy --all-targets -- -D warnings
 
   test:
     name: Test
@@ -71,28 +51,11 @@ jobs:
     steps:
       - run: sudo apt-get update && sudo apt-get install -y libfuse3-dev pkg-config
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
-        with:
-          path: 4n6mount
-      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
-        with:
-          repository: ${{ github.repository_owner }}/ext4fs-forensic
-          path: ext4fs-forensic
-      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
-        with:
-          repository: ${{ github.repository_owner }}/ewf
-          path: ewf
-      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
-        with:
-          repository: ${{ github.repository_owner }}/iso9660-forensic
-          path: iso9660-forensic
-      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
-        with:
-          repository: ${{ github.repository_owner }}/vmdk-forensic
-          path: vmdk-forensic
+      - name: Use crates.io for fleet deps (drop local path deps)
+        run: sed -i -E 's/, path = "[^"]*"//' Cargo.toml
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@9d47c6ad4b02e050fd481d890b2ea34778fd09d6 # v2.7.8
-      - run: cargo test --locked
-        working-directory: 4n6mount
+      - run: cargo test
 
   msrv:
     name: MSRV (1.85)
@@ -100,60 +63,24 @@ jobs:
     steps:
       - run: sudo apt-get update && sudo apt-get install -y libfuse3-dev pkg-config
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
-        with:
-          path: 4n6mount
-      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
-        with:
-          repository: ${{ github.repository_owner }}/ext4fs-forensic
-          path: ext4fs-forensic
-      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
-        with:
-          repository: ${{ github.repository_owner }}/ewf
-          path: ewf
-      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
-        with:
-          repository: ${{ github.repository_owner }}/iso9660-forensic
-          path: iso9660-forensic
-      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
-        with:
-          repository: ${{ github.repository_owner }}/vmdk-forensic
-          path: vmdk-forensic
+      - name: Use crates.io for fleet deps (drop local path deps)
+        run: sed -i -E 's/, path = "[^"]*"//' Cargo.toml
       - uses: dtolnay/rust-toolchain@1.85
       - uses: Swatinem/rust-cache@9d47c6ad4b02e050fd481d890b2ea34778fd09d6 # v2.7.8
-      - run: cargo test --locked
-        working-directory: 4n6mount
+      - run: cargo test
 
   deny:
     name: Cargo Deny
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
-        with:
-          path: 4n6mount
-      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
-        with:
-          repository: ${{ github.repository_owner }}/ext4fs-forensic
-          path: ext4fs-forensic
-      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
-        with:
-          repository: ${{ github.repository_owner }}/ewf
-          path: ewf
-      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
-        with:
-          repository: ${{ github.repository_owner }}/iso9660-forensic
-          path: iso9660-forensic
-      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
-        with:
-          repository: ${{ github.repository_owner }}/vmdk-forensic
-          path: vmdk-forensic
+      - name: Use crates.io for fleet deps (drop local path deps)
+        run: sed -i -E 's/, path = "[^"]*"//' Cargo.toml
       - uses: dtolnay/rust-toolchain@stable
-      # cargo-deny is run as a CLI step (not the Docker action) so it can resolve
-      # the crate's path dependencies, checked out as siblings above.
       - uses: taiki-e/install-action@15449e3094499af05d8d964a1c884208e4b8b595 # v2.81.11
         with:
           tool: cargo-deny
-      - run: cargo deny --locked check
-        working-directory: 4n6mount
+      - run: cargo deny check
 
   secrets:
     name: Secret Scan (gitleaks)
@@ -181,26 +108,9 @@ jobs:
     steps:
       - run: sudo apt-get update && sudo apt-get install -y libfuse3-dev pkg-config
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
-        with:
-          path: 4n6mount
-      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
-        with:
-          repository: ${{ github.repository_owner }}/ext4fs-forensic
-          path: ext4fs-forensic
-      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
-        with:
-          repository: ${{ github.repository_owner }}/ewf
-          path: ewf
-      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
-        with:
-          repository: ${{ github.repository_owner }}/iso9660-forensic
-          path: iso9660-forensic
-      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
-        with:
-          repository: ${{ github.repository_owner }}/vmdk-forensic
-          path: vmdk-forensic
+      - name: Use crates.io for fleet deps (drop local path deps)
+        run: sed -i -E 's/, path = "[^"]*"//' Cargo.toml
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@9d47c6ad4b02e050fd481d890b2ea34778fd09d6 # v2.7.8
       - run: cargo install cargo-geiger --locked
       - run: cargo geiger 2>&1 || true
-        working-directory: 4n6mount
