@@ -179,11 +179,13 @@ empty or a fabricated result. Per-process `proc/<pid>/`, `forensic/`, and raw
 |----------|--------------|--------|
 | **Linux** | fuser (libfuse) | Supported |
 | **macOS** | fuser (macFUSE) | Supported |
-| **Windows** | WinFsp | Supported (read-only) |
+| **Windows** | Dokan | Supported (read-only) |
 
 On Windows the filesystem tree is presented read-only at the mount point (no
-`ro/`/`rw/` overlay — that's the Unix backend's model); install
-[WinFsp](https://winfsp.dev/) first.
+`ro/`/`rw/` overlay — that's the Unix backend's model); install the
+[Dokany](https://github.com/dokan-dev/dokany/releases) library first. The Dokan
+bindings are MIT-licensed and the Dokany runtime is LGPL/MIT, so no copyleft
+code is linked into the binary.
 
 ## Install
 
@@ -228,7 +230,7 @@ You get ro/, rw/, deleted/, journal/, metadata/, session management, and evidenc
 
 ## Test coverage
 
-- **End-to-end mount smoke matrix** (`scripts/smoke/`, CI): every format is mounted and a known file is **read back through the mount** — on both **FUSE (Linux)** and **WinFsp (Windows)**. All 13 formats pass on both backends, enforced on every push.
+- **End-to-end mount smoke matrix** (`scripts/smoke/`, CI): every format is mounted and a known file is **read back through the mount**. All 13 formats pass on **FUSE (Linux)**, enforced on every push; the **Windows (Dokan)** backend is compile-gated in CI and validated at runtime on Windows.
 - **191 library tests** (216 with the `memory` feature) across FUSE callbacks, inode mapping, session, filter, format detection, and every filesystem/archive/memory backend
 - Each format validated against **real-world data with an independent oracle** (The Sleuth Kit, the OS's own driver, or Volatility) — not a self-encoded round-trip
 - Mock-based FUSE testing with `MockForensicFs`; CLI parsing tests for all argument combinations

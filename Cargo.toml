@@ -62,13 +62,10 @@ zip = { version = "2", optional = true }
 sevenz-rust = { version = "0.6", optional = true }
 
 # FUSE backend is Unix-only (libfuse / macFUSE). On Windows the mount layer uses
-# WinFsp instead (see the windows target table below).
+# Dokan instead (see the windows target table below).
 [target.'cfg(unix)'.dependencies]
 fuser = "0.15"
 
-# WinFsp mount backend — Windows only. `winfsp` wraps the native WinFsp 2.x
-# runtime; `widestring`/`windows-sys` provide the UTF-16 + Win32 attribute types
-# the FileSystemContext trait uses.
 [target.'cfg(windows)'.dependencies]
 # Dokan (MIT) Rust bindings for Windows user-mode filesystem mounting. The
 # Dokany runtime (dual LGPL/MIT) is installed separately, like FUSE on Unix, so

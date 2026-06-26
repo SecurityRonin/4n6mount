@@ -1,6 +1,6 @@
-# Windows WinFsp mount smoke test: for each row in manifest.tsv, mount the
+# Windows Dokan mount smoke test: for each row in manifest.tsv, mount the
 # fixture to a drive letter, read the known file through the mount, assert it.
-# The WinFsp backend renders the ForensicFs tree at the mount root (no ro/
+# The Dokan backend renders the ForensicFs tree at the mount root (no ro/
 # overlay), so the read path is <drive>\<subpath> for every layout.
 #
 # Usage: scripts/smoke/smoke.ps1 -Bin <4n6mount.exe> -Fix <fixtures-dir>
@@ -10,7 +10,6 @@ param(
 )
 $ErrorActionPreference = 'SilentlyContinue'
 $manifest = Join-Path $PSScriptRoot 'manifest.tsv'
-$env:PATH = "C:\Program Files (x86)\WinFsp\bin;" + $env:PATH
 $drive = 'Z:'
 $pass = 0; $fail = 0
 
@@ -37,5 +36,5 @@ foreach ($line in Get-Content $manifest) {
   Start-Sleep 1
 }
 
-Write-Output "=== WinFsp smoke: $pass passed, $fail failed ==="
+Write-Output "=== Dokan smoke: $pass passed, $fail failed ==="
 exit $fail

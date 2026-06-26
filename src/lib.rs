@@ -71,7 +71,7 @@ pub enum MountLayout {
 /// Mount options for the FUSE filesystem.
 ///
 /// Platform-agnostic configuration consumed by both the Unix (fuser)
-/// and Windows (`WinFSP`) mount backends.
+/// and Windows (Dokan) mount backends.
 pub struct MountOptions {
     pub read_only: bool,
     pub daemon: bool,
@@ -277,7 +277,7 @@ pub fn build_memory_fs(
     )))
 }
 
-/// Mount a forensic filesystem via FUSE (or `WinFSP` on Windows).
+/// Mount a forensic filesystem via FUSE (or Dokan on Windows).
 ///
 /// This is the main entry point for consumers.  Pass a `ForensicFs`
 /// implementation and a `MountOptions`, and this dispatches to the
