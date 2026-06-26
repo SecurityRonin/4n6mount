@@ -230,7 +230,7 @@ You get ro/, rw/, deleted/, journal/, metadata/, session management, and evidenc
 
 ## Test coverage
 
-- **End-to-end mount smoke matrix** (`scripts/smoke/`, CI): every format is mounted and a known file is **read back through the mount**. All 13 formats pass on **FUSE (Linux)**, enforced on every push; the **Windows (Dokan)** backend is compile-gated in CI and validated at runtime on Windows.
+- **End-to-end mount smoke matrix** (`scripts/smoke/`, CI): every format is mounted and a known file is **read back through the mount** — on both **FUSE (Linux)** and **Dokan (Windows)**. All 13 formats pass on both backends, enforced on every push.
 - **191 library tests** (216 with the `memory` feature) across FUSE callbacks, inode mapping, session, filter, format detection, and every filesystem/archive/memory backend
 - Each format validated against **real-world data with an independent oracle** (The Sleuth Kit, the OS's own driver, or Volatility) — not a self-encoded round-trip
 - Mock-based FUSE testing with `MockForensicFs`; CLI parsing tests for all argument combinations
