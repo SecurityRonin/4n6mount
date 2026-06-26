@@ -10,6 +10,7 @@ set -euo pipefail
 OUT="${1:-fixtures}"
 REPO="$(cd "$(dirname "$0")/../.." && pwd)"
 mkdir -p "$OUT"
+OUT="$(cd "$OUT" && pwd)"   # absolute: some steps cd into a work dir before writing
 W="$(mktemp -d)"
 trap 'rm -rf "$W"' EXIT
 
