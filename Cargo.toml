@@ -41,11 +41,11 @@ sevenz = ["dep:sevenz-rust"]
 
 [dependencies]
 clap = { version = "4", features = ["derive"] }
-ext4fs = { package = "ext4fs-core", version = "0.1.0", path = "../ext4fs-forensic/ext4fs-core", optional = true }
+ext4fs = { package = "ext4fs-core", version = "0.2", path = "../ext4fs-forensic/ext4fs-core", optional = true }
 ewf = { version = "0.2.1", path = "../ewf/ewf", optional = true }
-vmdk = { package = "vmdk-core", version = "0.7.0", path = "../vmdk-forensic/core", optional = true }
-iso9660-forensic = { version = "0.6.0", path = "../iso9660-forensic/iso", optional = true }
-ntfs-core = { version = "0.8.1", path = "../ntfs-forensic/core", optional = true }
+vmdk = { package = "vmdk-core", version = "0.8", path = "../vmdk-forensic/core", optional = true }
+iso9660-forensic = { version = "0.7", path = "../iso9660-forensic/iso", optional = true }
+ntfs-core = { version = "0.9", path = "../ntfs-forensic/core", optional = true }
 hfsplus-forensic = { version = "0.1.1", path = "../hfsplus-forensic", optional = true }
 exfat-fs = { version = "0.1.3", optional = true }
 apfs-core = { version = "0.1.0", optional = true }
