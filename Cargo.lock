@@ -72,9 +72,9 @@ dependencies = [
 
 [[package]]
 name = "aff4"
-version = "0.2.1"
+version = "0.2.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "95bbaa2ca7686153f5179bc66878fcf2af1236bcabc0f998a067b7704e8045b2"
+checksum = "12babe26530e1bd7df4b60f65296f6d12fba6fab2a9e7dab30f89163f4486254"
 dependencies = [
  "aes",
  "aes-kw",
