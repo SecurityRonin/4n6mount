@@ -2,7 +2,7 @@
 
 **Mount forensic images as a filesystem. Browse evidence like files. Write without touching the original.**
 
-One command turns a forensic disk image — or an archive, or a **memory dump** — into a mounted filesystem with read-only evidence access, a writable copy-on-write overlay, deleted file recovery, forensic timelines, and hash-based filtering, all without modifying a single byte of the original. Disk filesystems (ext4, NTFS, exFAT, HFS+, APFS, ISO9660), EWF/VMDK containers, zip/7z/tar archives, and memory dumps all mount through one command.
+One command turns a forensic disk image — or an archive, or a **memory dump** — into a mounted filesystem with read-only evidence access, a writable copy-on-write overlay, deleted file recovery, forensic timelines, and hash-based filtering, all without modifying a single byte of the original. Disk filesystems (ext4, NTFS, exFAT, HFS+, APFS, ISO9660), EWF/VMDK/AFF4 containers, AccessData AD1 and AFF4-Logical images, zip/7z/tar archives, and memory dumps all mount through one command.
 
 ## Why this exists
 
@@ -22,7 +22,8 @@ Forensic examiners spend too much time on tooling friction:
 4n6mount image.dd /mnt/evidence
 
 # Auto-detects the format: filesystems (ext4 / NTFS / exFAT / HFS+ / APFS /
-# ISO9660), EWF & VMDK containers, zip / 7z / tar.gz / tar.bz2 archives, and
+# ISO9660), EWF / VMDK / AFF4 containers, AD1 & AFF4-Logical images,
+# zip / 7z / tar.gz / tar.bz2 archives, and
 # memory dumps (LiME / AVML / ELF-core / Windows crash dump)
 # Creates virtual directories:
 ls /mnt/evidence/
@@ -141,9 +142,24 @@ Archives mount as a browsable read-only tree (their entries become files).
 
 ### Containers
 
-`EWF` (`.E01`) and `VMDK` images are opened transparently and their **inner**
-filesystem (ext4 / NTFS / exFAT / HFS+ / APFS / ISO) is detected and mounted; an
-unrecognized inner volume falls back to a single raw file.
+`EWF` (`.E01`), `VMDK`, and `AFF4` disk images are opened transparently and their
+**inner** filesystem (ext4 / NTFS / exFAT / HFS+ / APFS / ISO) is detected and
+mounted; an unrecognized inner volume falls back to a single raw file. AFF4 is a
+ZIP-based container with no magic bytes, so its shape is read from the embedded
+`information.turtle` (via `aff4`'s `container_kind`).
+
+### Logical images
+
+`AD1` (AccessData logical image) and `AFF4-Logical` are **file collections**, not
+disk images, so they mount as a browsable tree like an archive. Both read
+**lazily** — a large image is browsed without full extraction. Encrypted AD1
+(`ADCRYPT`) and encrypted AFF4 are refused with a clear error, never mounted as
+garbage.
+
+| Logical image | Status | Feature flag | Validated against |
+|---------------|--------|-------------|-------------------|
+| **AD1** | Supported | `ad1` (default) | `ad1-core` testfix oracle (independent zlib + hashes) |
+| **AFF4-Logical** | Supported | `aff4` (default) | `aff4` testutil oracle; real Evimetry / pyaff4 images |
 
 ### Memory dumps
 
@@ -230,8 +246,8 @@ You get ro/, rw/, deleted/, journal/, metadata/, session management, and evidenc
 
 ## Test coverage
 
-- **End-to-end mount smoke matrix** (`scripts/smoke/`, CI): every format is mounted and a known file is **read back through the mount** — on both **FUSE (Linux)** and **Dokan (Windows)**. All 13 formats pass on both backends, enforced on every push.
-- **191 library tests** (216 with the `memory` feature) across FUSE callbacks, inode mapping, session, filter, format detection, and every filesystem/archive/memory backend
+- **End-to-end mount smoke matrix** (`scripts/smoke/`, CI): every format is mounted and a known file is **read back through the mount** — on both **FUSE (Linux)** and **Dokan (Windows)**. All 15 formats pass on both backends, enforced on every push.
+- **208 library tests** (more with the `memory` feature) across FUSE callbacks, inode mapping, session, filter, format detection, and every filesystem/archive/logical-image/memory backend
 - Each format validated against **real-world data with an independent oracle** (The Sleuth Kit, the OS's own driver, or Volatility) — not a self-encoded round-trip
 - Mock-based FUSE testing with `MockForensicFs`; CLI parsing tests for all argument combinations
 
@@ -242,7 +258,9 @@ You get ro/, rw/, deleted/, journal/, metadata/, session management, and evidenc
 | [**ext4fs-forensic**](https://github.com/SecurityRonin/ext4fs-forensic) | ext4 filesystem parser with forensic capabilities |
 | [**ntfs-forensic**](https://github.com/SecurityRonin/ntfs-forensic) | NTFS parser (MFT, `$DATA`, ADS, LZNT1) |
 | [**apfs-forensic**](https://github.com/SecurityRonin/apfs-forensic) | APFS container + volume reader |
-| [**ewf**](https://github.com/SecurityRonin/ewf) | E01/EWF forensic disk image reader |
+| [**ewf-forensic**](https://github.com/SecurityRonin/ewf-forensic) | E01/EWF forensic disk image reader |
+| [**aff4**](https://github.com/SecurityRonin/aff4-forensic) | AFF4 reader (disk + logical, AES-XTS decrypt) |
+| [**ad1-core**](https://github.com/SecurityRonin/ad1-forensic) | AccessData AD1 logical-image reader |
 | [**memory-forensic** (memf)](https://github.com/SecurityRonin/memory-forensic) | Memory-dump analysis (Volatility-parity walkers) |
 | [**blazehash**](https://github.com/SecurityRonin/blazehash) | Forensic file hasher — hashdeep for the modern era |
 | **4n6mount** | Universal forensic FUSE mount (this crate) |
