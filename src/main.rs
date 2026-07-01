@@ -135,6 +135,16 @@ fn main() {
         })
     };
 
+    // AFF4 containers are ZIP archives with no magic bytes, so a byte probe
+    // classifies them as Zip; refine an auto-detected Zip by reading the AFF4
+    // information.turtle. A forced `--fs` is respected as-is.
+    #[cfg(feature = "aff4")]
+    let fs_type = if cli.fs.is_none() && fs_type == forensic_mount::detect::FsType::Zip {
+        forensic_mount::detect::detect_aff4(std::path::Path::new(&image)).unwrap_or(fs_type)
+    } else {
+        fs_type
+    };
+
     eprintln!("Detected filesystem: {fs_type}");
 
     // Compute a fallback name for raw (Unknown) mounts from the image basename.
@@ -192,6 +202,34 @@ fn main() {
                     std::process::exit(1);
                 });
             Box::new(fs)
+        }
+        #[cfg(feature = "aff4")]
+        forensic_mount::detect::FsType::Aff4Logical => {
+            // AFF4-Logical is a file collection (like AD1) opened by path.
+            let fs = forensic_mount::fs_aff4::Aff4ForensicFs::open(std::path::Path::new(&image))
+                .unwrap_or_else(|e| {
+                    eprintln!("Cannot open AFF4-Logical container: {e}");
+                    std::process::exit(1);
+                });
+            Box::new(fs)
+        }
+        #[cfg(feature = "aff4")]
+        forensic_mount::detect::FsType::Aff4Disk => {
+            // An AFF4 disk image is a Read+Seek stream (like EWF/VMDK): open it,
+            // re-detect the inner filesystem, and mount that. Encrypted images
+            // are refused here with a clear error.
+            let mut reader =
+                aff4::Aff4Reader::open(std::path::Path::new(&image)).unwrap_or_else(|e| {
+                    eprintln!("Cannot open AFF4 disk image: {e}");
+                    std::process::exit(1);
+                });
+            let inner = forensic_mount::detect::detect_filesystem(&mut reader)
+                .unwrap_or(forensic_mount::detect::FsType::Unknown);
+            eprintln!("AFF4 disk image detected, inner filesystem: {inner}");
+            forensic_mount::build_filesystem(reader, inner, &image_name).unwrap_or_else(|e| {
+                eprintln!("Cannot mount filesystem inside AFF4: {e}");
+                std::process::exit(1);
+            })
         }
         other => forensic_mount::build_filesystem(file, other, &image_name).unwrap_or_else(|e| {
             eprintln!("{e}");
