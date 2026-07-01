@@ -25,7 +25,7 @@ name = "mkdump"
 required-features = ["memory"]
 
 [features]
-default = ["ext4", "ewf", "iso", "vmdk", "tarball", "zip", "sevenz", "ntfs", "hfsplus", "exfat", "apfs", "ad1"]
+default = ["ext4", "ewf", "iso", "vmdk", "tarball", "zip", "sevenz", "ntfs", "hfsplus", "exfat", "apfs", "ad1", "aff4"]
 ext4 = ["dep:ext4fs"]
 ewf = ["dep:ewf"]
 iso = ["dep:iso9660-forensic"]
@@ -39,6 +39,7 @@ tarball = ["dep:tar", "dep:flate2", "dep:bzip2"]
 zip = ["dep:zip"]
 sevenz = ["dep:sevenz-rust"]
 ad1 = ["dep:ad1-core"]
+aff4 = ["dep:aff4"]
 
 [dependencies]
 clap = { version = "4", features = ["derive"] }
@@ -70,12 +71,17 @@ sevenz-rust = { version = "0.6", optional = true }
 # AccessData AD1 logical-image reader (pure-Rust; lib name `ad1`). Lazy,
 # positioned reads so a large image is browsed without full extraction.
 ad1-core = { version = "0.1", optional = true }
+# AFF4 reader: disk images (Read+Seek → inner FS) + AFF4-Logical collections +
+# container_kind() detection. Pure-Rust.
+aff4 = { version = "0.2", optional = true }
 
 [dev-dependencies]
 # AD1 fixtures are built in-memory with spec-faithful, independently-hashed
 # ground truth (flate2 + RustCrypto) via ad1-core's `testfix` feature; written
 # to a tempdir because AD1 opens by path.
 ad1-core = { version = "0.1", features = ["testfix"] }
+# AFF4 fixture builders (aff4::testutil) for detection/backend tests.
+aff4 = { version = "0.2", features = ["test-helpers"] }
 tempfile = "3"
 
 # FUSE backend is Unix-only (libfuse / macFUSE). On Windows the mount layer uses
