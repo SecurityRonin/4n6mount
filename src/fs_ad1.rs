@@ -1,5 +1,5 @@
 #![forbid(unsafe_code)]
-//! AD1 (AccessData logical image) lazy mount — `ad1` feature.
+//! AD1 (`AccessData` logical image) lazy mount — `ad1` feature.
 //!
 //! Entries are enumerated at open into a synthetic inode tree
 //! ([`crate::archive_tree::ArchiveTree`]); file bytes are read lazily via
@@ -24,40 +24,79 @@ impl Ad1ForensicFs {
     /// Open an AD1 image by path (discovers sibling `.ad2…` segments alongside
     /// it). Returns a `NotSupported` error for encrypted (ADCRYPT) images.
     pub fn open(path: &Path) -> Result<Self, FsError> {
-        unimplemented!()
+        let reader = Ad1Reader::open(path).map_err(map_err)?;
+        let mut tree = ArchiveTree::new();
+        for (idx, e) in reader.entries().iter().enumerate() {
+            // AD1 timestamps are display strings ("YYYYMMDDThhmmss"); browsing
+            // doesn't depend on them, so v1 surfaces the epoch rather than
+            // parsing. The synthetic tree carries the path, type, and size.
+            tree.insert(
+                &e.path,
+                e.is_dir,
+                e.size,
+                FsTimestamp {
+                    seconds: 0,
+                    nanoseconds: 0,
+                },
+                if e.is_dir { None } else { Some(idx) },
+            );
+        }
+        Ok(Self { reader, tree })
     }
 
     /// Read `len` bytes at `offset` from the file at `ino`, inflating only the
     /// overlapping zlib chunks. `read_at` may short-read, so loop until filled.
     fn read_range(&self, ino: u64, offset: u64, len: usize) -> FsResult<Vec<u8>> {
-        unimplemented!()
+        let idx = self
+            .tree
+            .payload_id(ino)
+            .ok_or_else(|| FsError::NotFound(format!("inode {ino} is not a readable file")))?;
+        // `read_at` takes `&self`; clone the small entry so the tree's `&mut
+        // self` method signatures stay intact.
+        let entry = self.reader.entries()[idx].clone();
+        let want = (entry.size.saturating_sub(offset) as usize).min(len);
+        let mut buf = vec![0u8; want];
+        let mut filled = 0;
+        while filled < want {
+            let n = self
+                .reader
+                .read_at(&entry, offset + filled as u64, &mut buf[filled..])
+                .map_err(map_err)?;
+            if n == 0 {
+                break;
+            }
+            filled += n;
+        }
+        buf.truncate(filled);
+        Ok(buf)
     }
 }
 
 impl ForensicFs for Ad1ForensicFs {
     fn root_ino(&self) -> u64 {
-        unimplemented!()
+        self.tree.root_ino()
     }
     fn read_dir(&mut self, ino: u64) -> FsResult<Vec<FsDirEntry>> {
-        unimplemented!()
+        self.tree.read_dir(ino)
     }
     fn lookup(&mut self, parent_ino: u64, name: &[u8]) -> FsResult<Option<u64>> {
-        unimplemented!()
+        self.tree.lookup(parent_ino, name)
     }
     fn metadata(&mut self, ino: u64) -> FsResult<FsMetadata> {
-        unimplemented!()
+        self.tree.metadata(ino)
     }
     fn read_file(&mut self, ino: u64) -> FsResult<Vec<u8>> {
-        unimplemented!()
+        let size = self.metadata(ino)?.size;
+        self.read_range(ino, 0, size as usize)
     }
     fn read_file_range(&mut self, ino: u64, offset: u64, len: u64) -> FsResult<Vec<u8>> {
-        unimplemented!()
+        self.read_range(ino, offset, len as usize)
     }
     fn read_link(&mut self, _ino: u64) -> FsResult<Vec<u8>> {
         Err(not_supported("ad1: symlinks are not surfaced"))
     }
     fn fs_info(&self) -> FsResult<serde_json::Value> {
-        unimplemented!()
+        Ok(serde_json::json!({ "type": "ad1", "entries": self.reader.entries().len() }))
     }
 }
 
@@ -67,8 +106,9 @@ fn map_err(e: ad1::Ad1Error) -> FsError {
         ad1::Ad1Error::Io(io) => FsError::Io(io),
         // ADCRYPT (encrypted) and other unsupported features.
         ad1::Ad1Error::Unsupported(m) => FsError::NotSupported(format!("ad1: {m}")),
-        ad1::Ad1Error::NotAd1(m) => FsError::Corrupt(format!("ad1: {m}")),
-        ad1::Ad1Error::Malformed(m) => FsError::Corrupt(format!("ad1: {m}")),
+        ad1::Ad1Error::NotAd1(m) | ad1::Ad1Error::Malformed(m) => {
+            FsError::Corrupt(format!("ad1: {m}"))
+        }
     }
 }
 
