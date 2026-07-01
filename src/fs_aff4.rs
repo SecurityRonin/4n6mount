@@ -27,13 +27,40 @@ impl Aff4ForensicFs {
     /// Open an AFF4-Logical container by path. Returns a `NotSupported` error
     /// for encrypted containers (decryption needs a password).
     pub fn open(path: &Path) -> Result<Self, FsError> {
-        unimplemented!()
+        let container = LogicalContainer::open(path).map_err(map_err)?;
+        let mut tree = ArchiveTree::new();
+        for (idx, e) in container.files().iter().enumerate() {
+            // original_file_name is slash-separated and often prefixed "./".
+            // ArchiveTree synthesises any missing parent directories.
+            let rel = e.original_file_name.trim_start_matches("./");
+            tree.insert(
+                rel,
+                false,
+                e.size,
+                FsTimestamp {
+                    seconds: 0,
+                    nanoseconds: 0,
+                },
+                Some(idx),
+            );
+        }
+        Ok(Self { container, tree })
     }
 
     /// Read `len` bytes at `offset` from the file at `ino`. AFF4-Logical has no
     /// positioned read, so the whole file is inflated and the window sliced.
     fn read_range(&mut self, ino: u64, offset: u64, len: usize) -> FsResult<Vec<u8>> {
-        unimplemented!()
+        let idx = self
+            .tree
+            .payload_id(ino)
+            .ok_or_else(|| FsError::NotFound(format!("inode {ino} is not a readable file")))?;
+        // Clone the small entry to release the immutable borrow before the
+        // mutable read_file call.
+        let entry = self.container.files()[idx].clone();
+        let data = self.container.read_file(&entry).map_err(map_err)?;
+        let start = (offset as usize).min(data.len());
+        let end = start.saturating_add(len).min(data.len());
+        Ok(data[start..end].to_vec())
     }
 }
 
