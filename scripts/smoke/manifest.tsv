@@ -3,7 +3,7 @@
 #         mem  -> ForensicFs tree at the root on both (sys/...).
 # Every file-bearing format exposes hello.txt = "hello from <fmt>". Memory dumps
 # have no embedded user file, so they assert sys/os-info.txt instead.
-# Committed fixtures: exfat.img, hfsplus.img, apfs.img, ad1.ad1. The rest are minted by
+# Committed fixtures: exfat.img, hfsplus.img, apfs.img, ad1.ad1, aff4-logical.aff4. The rest are minted by
 # gen-fixtures.sh. expected = a substring that must appear in the read file.
 ext4	ext4.img	ext4	disk	hello.txt	hello from ext4
 ntfs	ntfs.img	ntfs	disk	hello.txt	hello from ntfs
@@ -18,4 +18,5 @@ tarbz2	test.tar.bz2	tarbz2	disk	hello.txt	hello from tarbz2
 ewf	test.E01	ewf	disk	hello.txt	hello from ewf
 vmdk	test.vmdk	vmdk	disk	hello.txt	hello from vmdk
 ad1	ad1.ad1	ad1	disk	root/hello.txt	hello from ad1
+aff4	aff4-logical.aff4	aff4-logical	disk	hello.txt	hello from aff4
 memory	crash.dmp	memory	mem	sys/os-info.txt	OS: Windows

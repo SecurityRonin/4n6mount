@@ -15,7 +15,7 @@ W="$(mktemp -d)"
 trap 'rm -rf "$W"' EXIT
 
 # Committed fixtures (Apple-driver / synthetic) — copied as-is.
-for f in exfat.img hfsplus.img apfs.img crash.dmp ad1.ad1; do
+for f in exfat.img hfsplus.img apfs.img crash.dmp ad1.ad1 aff4-logical.aff4; do
   cp "$REPO/tests/data/$f" "$OUT/$f"
 done
 
