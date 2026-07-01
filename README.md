@@ -258,7 +258,7 @@ You get ro/, rw/, deleted/, journal/, metadata/, session management, and evidenc
 | [**ext4fs-forensic**](https://github.com/SecurityRonin/ext4fs-forensic) | ext4 filesystem parser with forensic capabilities |
 | [**ntfs-forensic**](https://github.com/SecurityRonin/ntfs-forensic) | NTFS parser (MFT, `$DATA`, ADS, LZNT1) |
 | [**apfs-forensic**](https://github.com/SecurityRonin/apfs-forensic) | APFS container + volume reader |
-| [**ewf**](https://github.com/SecurityRonin/ewf) | E01/EWF forensic disk image reader |
+| [**ewf-forensic**](https://github.com/SecurityRonin/ewf-forensic) | E01/EWF forensic disk image reader |
 | [**aff4**](https://github.com/SecurityRonin/aff4-forensic) | AFF4 reader (disk + logical, AES-XTS decrypt) |
 | [**ad1-core**](https://github.com/SecurityRonin/ad1-forensic) | AccessData AD1 logical-image reader |
 | [**memory-forensic** (memf)](https://github.com/SecurityRonin/memory-forensic) | Memory-dump analysis (Volatility-parity walkers) |
