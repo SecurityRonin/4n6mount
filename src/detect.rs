@@ -18,6 +18,10 @@ pub enum FsType {
     TarGz,
     TarBz2,
     Ad1,
+    /// AFF4 disk image (`aff4:ImageStream`/`aff4:Map`) — mount the inner FS.
+    Aff4Disk,
+    /// AFF4-Logical file collection (`aff4:FileImage`).
+    Aff4Logical,
     Unknown,
 }
 
@@ -37,6 +41,8 @@ impl std::fmt::Display for FsType {
             FsType::TarGz => write!(f, "tar.gz"),
             FsType::TarBz2 => write!(f, "tar.bz2"),
             FsType::Ad1 => write!(f, "ad1"),
+            FsType::Aff4Disk => write!(f, "aff4-disk"),
+            FsType::Aff4Logical => write!(f, "aff4-logical"),
             FsType::Unknown => write!(f, "unknown"),
         }
     }
@@ -59,6 +65,8 @@ impl std::str::FromStr for FsType {
             "targz" | "tar.gz" | "tgz" | "gz" | "gzip" => Ok(FsType::TarGz),
             "tarbz2" | "tar.bz2" | "tbz2" | "tbz" | "bz2" | "bzip2" => Ok(FsType::TarBz2),
             "ad1" | "adsegmentedfile" => Ok(FsType::Ad1),
+            "aff4" | "aff4-disk" | "aff4disk" => Ok(FsType::Aff4Disk),
+            "aff4-logical" | "aff4logical" | "aff4l" => Ok(FsType::Aff4Logical),
             _ => Err(format!("unknown filesystem type: {s}")),
         }
     }
@@ -201,6 +209,23 @@ impl std::fmt::Display for MemDumpFormat {
 /// carry no signature and must be selected explicitly (`--fs memory`). The seek
 /// position is reset to 0. Magics mirror `memf-format`'s plugins (`LiME`
 /// `0x4C694D45`, AVML `0x4C4D5641`, ELF `ET_CORE`, crash `PAGE` + `DU64`).
+/// Refine a file into its AFF4 shape by reading its `information.turtle`.
+///
+/// AFF4 containers are ZIP archives with no distinguishing magic bytes, so a
+/// byte probe classifies them as [`FsType::Zip`]; the caller passes the path
+/// here to disambiguate. Returns `None` for a plain ZIP or any non-AFF4 file.
+/// Encrypted AFF4 maps to [`FsType::Aff4Disk`] and is refused at open.
+#[cfg(feature = "aff4")]
+pub fn detect_aff4(path: &std::path::Path) -> Option<FsType> {
+    match aff4::container_kind(path) {
+        // Encrypted maps to the disk arm, which refuses it at open with a clear
+        // error — the inner shape is unknown without the password.
+        Ok(aff4::ContainerKind::Disk | aff4::ContainerKind::Encrypted) => Some(FsType::Aff4Disk),
+        Ok(aff4::ContainerKind::Logical) => Some(FsType::Aff4Logical),
+        Err(_) => None,
+    }
+}
+
 pub fn detect_memory_dump<R: Read + Seek>(source: &mut R) -> io::Result<Option<MemDumpFormat>> {
     source.seek(SeekFrom::Start(0))?;
     let mut buf = [0u8; 18];
@@ -245,6 +270,42 @@ fn read_fill<R: Read>(source: &mut R, buf: &mut [u8]) -> usize {
 mod tests {
     use super::*;
     use std::io::Cursor;
+
+    #[cfg(feature = "aff4")]
+    mod aff4 {
+        use super::*;
+        use std::io::Write as _;
+
+        fn write_tmp(bytes: &[u8]) -> tempfile::NamedTempFile {
+            let mut f = tempfile::NamedTempFile::new().unwrap();
+            f.write_all(bytes).unwrap();
+            f
+        }
+
+        #[test]
+        fn detects_aff4_disk_image() {
+            let f = write_tmp(&::aff4::testutil::test_aff4(&[0u8; 512]));
+            assert_eq!(detect_aff4(f.path()), Some(FsType::Aff4Disk));
+        }
+
+        #[test]
+        fn detects_aff4_logical() {
+            // Detection ignores the hash, so a placeholder md5 is fine.
+            let img = ::aff4::testutil::test_aff4_logical(
+                "a.txt",
+                b"hi",
+                "00000000000000000000000000000000",
+            );
+            let f = write_tmp(&img);
+            assert_eq!(detect_aff4(f.path()), Some(FsType::Aff4Logical));
+        }
+
+        #[test]
+        fn non_aff4_file_is_none() {
+            let f = write_tmp(b"not an aff4 container at all");
+            assert_eq!(detect_aff4(f.path()), None);
+        }
+    }
 
     #[test]
     fn detects_vmdk_sparse_magic() {

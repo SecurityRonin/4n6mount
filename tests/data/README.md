@@ -95,3 +95,21 @@ self-licensed fixtures are committed with their md5 below.
 | File | Bytes | MD5 |
 |---|---|---|
 | `ad1.ad1` | 1150 | `e9295f14974e0e661b58f234f34a0273` |
+
+### `aff4-logical.aff4`
+
+- **Source / Identity:** an 863-byte AFF4-Logical container built by the `aff4`
+  crate's spec-faithful `testutil::test_aff4_logical` writer, holding one
+  `aff4:FileImage` entry `hello.txt`.
+- **Reproduce:** `aff4::testutil::test_aff4_logical("hello.txt", b"hello from aff4\n", <md5>)`,
+  verified to read back through `Aff4ForensicFs`.
+- **Contents:** `hello.txt` (`"hello from aff4\n"`).
+- **Used by:** the mount smoke matrix (`aff4` row). The AFF4 *disk* shape is not
+  smoke-fixtured (the test writer is single-chunk and cannot wrap a real inner
+  filesystem); its `Aff4Reader` is validated tier-1 against real Evimetry images
+  in the `aff4` crate, and its mount path is the EWF/VMDK glue.
+- **License:** CC0 / public-domain — synthetic, authored here.
+
+| File | Bytes | MD5 |
+|---|---|---|
+| `aff4-logical.aff4` | 863 | `8f9fd38addc5770b42e60f20af8883b8` |
