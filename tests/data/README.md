@@ -79,3 +79,19 @@ self-licensed fixtures are committed with their md5 below.
   resolves OS = Windows; `sys/os-info.txt` renders the profile.
 - **Used by:** the mount smoke matrix (`memory` row).
 - **License:** CC0 / public-domain — synthetic, authored here.
+
+### `ad1.ad1`
+
+- **Source / Identity:** a 1150-byte AccessData AD1 logical image built by
+  `ad1-core`'s spec-faithful `testfix` writer (independent flate2 zlib +
+  RustCrypto hashes), holding the single tree `root/hello.txt`.
+- **Reproduce:** `Node::Dir("root", [Node::File("hello.txt", b"hello from ad1\n")])`
+  → `ad1::testfix::build(tree).bytes`, verified to read back through
+  `Ad1ForensicFs`.
+- **Contents:** `root/hello.txt` (`"hello from ad1\n"`).
+- **Used by:** the mount smoke matrix (`ad1` row).
+- **License:** CC0 / public-domain — synthetic, authored here.
+
+| File | Bytes | MD5 |
+|---|---|---|
+| `ad1.ad1` | 1150 | `e9295f14974e0e661b58f234f34a0273` |
