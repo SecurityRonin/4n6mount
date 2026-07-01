@@ -217,7 +217,13 @@ impl std::fmt::Display for MemDumpFormat {
 /// Encrypted AFF4 maps to [`FsType::Aff4Disk`] and is refused at open.
 #[cfg(feature = "aff4")]
 pub fn detect_aff4(path: &std::path::Path) -> Option<FsType> {
-    unimplemented!()
+    match aff4::container_kind(path) {
+        // Encrypted maps to the disk arm, which refuses it at open with a clear
+        // error — the inner shape is unknown without the password.
+        Ok(aff4::ContainerKind::Disk | aff4::ContainerKind::Encrypted) => Some(FsType::Aff4Disk),
+        Ok(aff4::ContainerKind::Logical) => Some(FsType::Aff4Logical),
+        Err(_) => None,
+    }
 }
 
 pub fn detect_memory_dump<R: Read + Seek>(source: &mut R) -> io::Result<Option<MemDumpFormat>> {
