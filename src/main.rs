@@ -146,8 +146,9 @@ fn main() {
     // Create the ForensicFs. Container formats (EWF/VMDK) are opened here, then
     // their inner filesystem is detected and built; every other type — disk
     // filesystems and archives alike — is built directly from the image file.
-    // All construction funnels through `build_filesystem`, so a format is wired
-    // in exactly once.
+    // Seekable-stream formats funnel through `build_filesystem` (the `other`
+    // arm). Containers (EWF/VMDK) re-detect and mount their inner filesystem;
+    // AD1 is a logical tree opened by path, so it builds its ForensicFs directly.
     let forensic_fs: Box<dyn forensic_mount::ForensicFs + Send> = match fs_type {
         #[cfg(feature = "vmdk")]
         forensic_mount::detect::FsType::Vmdk => {
@@ -177,6 +178,20 @@ fn main() {
                 eprintln!("Cannot mount filesystem inside EWF: {e}");
                 std::process::exit(1);
             })
+        }
+        #[cfg(feature = "ad1")]
+        forensic_mount::detect::FsType::Ad1 => {
+            // AD1 is a logical file tree, not a seekable disk stream, and it
+            // opens by path to discover sibling `.ad2…` segments — so it builds
+            // the ForensicFs directly instead of funnelling through
+            // `build_filesystem`. Encrypted (ADCRYPT) images surface here as a
+            // NotSupported error and are refused, not mounted.
+            let fs = forensic_mount::fs_ad1::Ad1ForensicFs::open(std::path::Path::new(&image))
+                .unwrap_or_else(|e| {
+                    eprintln!("Cannot open AD1 image: {e}");
+                    std::process::exit(1);
+                });
+            Box::new(fs)
         }
         other => forensic_mount::build_filesystem(file, other, &image_name).unwrap_or_else(|e| {
             eprintln!("{e}");

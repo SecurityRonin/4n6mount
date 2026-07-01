@@ -3,6 +3,18 @@
 version = 4
 
 [[package]]
+name = "ad1-core"
+version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7e59ecdd8e435477b9e7ef0b2ca8d93377fb152cb69ce3939c4c1b4eeb6abbd4"
+dependencies = [
+ "flate2",
+ "md-5",
+ "sha1",
+ "thiserror 2.0.18",
+]
+
+[[package]]
 name = "adler"
 version = "1.0.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1668,6 +1680,7 @@ checksum = "77ce24cb58228fbb8aa041425bb1050850ac19177686ea6e0f41a70416f56fdb"
 name = "forensic-mount"
 version = "0.4.1"
 dependencies = [
+ "ad1-core",
  "apfs-core",
  "bzip2",
  "clap",
@@ -1694,6 +1707,7 @@ dependencies = [
  "sevenz-rust",
  "sha2",
  "tar",
+ "tempfile",
  "vmdk-core",
  "widestring",
  "zip",

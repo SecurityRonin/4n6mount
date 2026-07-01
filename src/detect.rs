@@ -17,6 +17,7 @@ pub enum FsType {
     SevenZ,
     TarGz,
     TarBz2,
+    Ad1,
     Unknown,
 }
 
@@ -35,6 +36,7 @@ impl std::fmt::Display for FsType {
             FsType::SevenZ => write!(f, "7z"),
             FsType::TarGz => write!(f, "tar.gz"),
             FsType::TarBz2 => write!(f, "tar.bz2"),
+            FsType::Ad1 => write!(f, "ad1"),
             FsType::Unknown => write!(f, "unknown"),
         }
     }
@@ -56,6 +58,7 @@ impl std::str::FromStr for FsType {
             "7z" | "sevenz" | "7zip" => Ok(FsType::SevenZ),
             "targz" | "tar.gz" | "tgz" | "gz" | "gzip" => Ok(FsType::TarGz),
             "tarbz2" | "tar.bz2" | "tbz2" | "tbz" | "bz2" | "bzip2" => Ok(FsType::TarBz2),
+            "ad1" | "adsegmentedfile" => Ok(FsType::Ad1),
             _ => Err(format!("unknown filesystem type: {s}")),
         }
     }
@@ -113,6 +116,15 @@ pub fn detect_filesystem<R: Read + Seek>(source: &mut R) -> io::Result<FsType> {
     }
     if bytes_read >= 6 && buf[0..6] == [0x37, 0x7A, 0xBC, 0xAF, 0x27, 0x1C] {
         return Ok(FsType::SevenZ);
+    }
+    // AccessData AD1 logical image (segmented). Magic "ADSEGMENTEDFILE" at 0.
+    // "ADCRYPT" is the encrypted variant — still detected as AD1; the backend
+    // refuses it at open (cannot mount ciphertext).
+    if bytes_read >= 15 && buf[0..15] == *b"ADSEGMENTEDFILE" {
+        return Ok(FsType::Ad1);
+    }
+    if bytes_read >= 7 && buf[0..7] == *b"ADCRYPT" {
+        return Ok(FsType::Ad1);
     }
 
     // Check APFS: container superblock magic "NXSB" at byte 32 (after the
@@ -242,6 +254,29 @@ mod tests {
         assert_eq!(
             detect_filesystem(&mut Cursor::new(data)).unwrap(),
             FsType::Vmdk
+        );
+    }
+
+    #[test]
+    fn detects_ad1_segmented_magic() {
+        // AccessData AD1 logical image: "ADSEGMENTEDFILE\0" (16 bytes) at offset 0.
+        let mut data = vec![0u8; 512];
+        data[0..16].copy_from_slice(b"ADSEGMENTEDFILE\0");
+        assert_eq!(
+            detect_filesystem(&mut Cursor::new(data)).unwrap(),
+            FsType::Ad1
+        );
+    }
+
+    #[test]
+    fn detects_ad1_encrypted_magic() {
+        // Encrypted AD1 variant: "ADCRYPT" at offset 0 — detected as AD1; the
+        // backend refuses it at open (cannot mount ciphertext).
+        let mut data = vec![0u8; 512];
+        data[0..7].copy_from_slice(b"ADCRYPT");
+        assert_eq!(
+            detect_filesystem(&mut Cursor::new(data)).unwrap(),
+            FsType::Ad1
         );
     }
 

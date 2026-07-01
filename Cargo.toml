@@ -25,7 +25,7 @@ name = "mkdump"
 required-features = ["memory"]
 
 [features]
-default = ["ext4", "ewf", "iso", "vmdk", "tarball", "zip", "sevenz", "ntfs", "hfsplus", "exfat", "apfs"]
+default = ["ext4", "ewf", "iso", "vmdk", "tarball", "zip", "sevenz", "ntfs", "hfsplus", "exfat", "apfs", "ad1"]
 ext4 = ["dep:ext4fs"]
 ewf = ["dep:ewf"]
 iso = ["dep:iso9660-forensic"]
@@ -38,6 +38,7 @@ memory = ["dep:memf-format", "dep:memf-core", "dep:memf-session", "dep:memf-symb
 tarball = ["dep:tar", "dep:flate2", "dep:bzip2"]
 zip = ["dep:zip"]
 sevenz = ["dep:sevenz-rust"]
+ad1 = ["dep:ad1-core"]
 
 [dependencies]
 clap = { version = "4", features = ["derive"] }
@@ -66,6 +67,16 @@ flate2 = { version = "1", optional = true }
 bzip2 = { version = "0.5", optional = true }
 zip = { version = "2", optional = true }
 sevenz-rust = { version = "0.6", optional = true }
+# AccessData AD1 logical-image reader (pure-Rust; lib name `ad1`). Lazy,
+# positioned reads so a large image is browsed without full extraction.
+ad1-core = { version = "0.1", optional = true }
+
+[dev-dependencies]
+# AD1 fixtures are built in-memory with spec-faithful, independently-hashed
+# ground truth (flate2 + RustCrypto) via ad1-core's `testfix` feature; written
+# to a tempdir because AD1 opens by path.
+ad1-core = { version = "0.1", features = ["testfix"] }
+tempfile = "3"
 
 # FUSE backend is Unix-only (libfuse / macFUSE). On Windows the mount layer uses
 # Dokan instead (see the windows target table below).

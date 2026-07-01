@@ -30,6 +30,9 @@ pub mod fs_zip;
 #[cfg(feature = "sevenz")]
 pub mod fs_sevenz;
 
+#[cfg(feature = "ad1")]
+pub mod fs_ad1;
+
 #[cfg(feature = "ntfs")]
 pub mod fs_ntfs;
 
