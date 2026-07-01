@@ -117,6 +117,15 @@ pub fn detect_filesystem<R: Read + Seek>(source: &mut R) -> io::Result<FsType> {
     if bytes_read >= 6 && buf[0..6] == [0x37, 0x7A, 0xBC, 0xAF, 0x27, 0x1C] {
         return Ok(FsType::SevenZ);
     }
+    // AccessData AD1 logical image (segmented). Magic "ADSEGMENTEDFILE" at 0.
+    // "ADCRYPT" is the encrypted variant — still detected as AD1; the backend
+    // refuses it at open (cannot mount ciphertext).
+    if bytes_read >= 15 && buf[0..15] == *b"ADSEGMENTEDFILE" {
+        return Ok(FsType::Ad1);
+    }
+    if bytes_read >= 7 && buf[0..7] == *b"ADCRYPT" {
+        return Ok(FsType::Ad1);
+    }
 
     // Check APFS: container superblock magic "NXSB" at byte 32 (after the
     // 32-byte obj_phys_t object header of block 0).
