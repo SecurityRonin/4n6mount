@@ -4,7 +4,8 @@
 //! `ForensicFs` provider backed by memf's analysis library, exposing a memory
 //! dump's `proc/`, `sys/`, and `forensic/` views as a browsable filesystem.
 //!
-//! See `docs/plans/2026-06-25-memory-dump-mounting.md`. This module is built
+//! See ADR `docs/decisions/0003-memory-dump-mounting.md` (architecture) and
+//! `docs/plans/memory-mounting-roadmap.md` (remaining phases). This module is built
 //! only under the `memory` feature. Phase 0 extracted memf's analysis bootstrap
 //! into the `memf-session` library crate so 4n6mount can drive it headlessly;
 //! later phases add the synthetic tree and lazy artifact rendering.
