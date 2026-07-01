@@ -33,6 +33,9 @@ pub mod fs_sevenz;
 #[cfg(feature = "ad1")]
 pub mod fs_ad1;
 
+#[cfg(feature = "aff4")]
+pub mod fs_aff4;
+
 #[cfg(feature = "ntfs")]
 pub mod fs_ntfs;
 
