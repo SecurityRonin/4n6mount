@@ -51,8 +51,9 @@ self-licensed fixtures are committed with their md5 below.
   [jschicht/LogFileParser](https://github.com/jschicht/LogFileParser)), consumed
   in place from the sibling `ntfs-forensic/tests/data/SampleTinyNtfsVolume.zip`.
   Ground truth via TSK `fls`/`icat` (root holds `file1.txt`..`file8.txt` +
-  `$RECYCLE.BIN`; `file1.txt` is MFT record 37). `src/fs_ntfs.rs` skips cleanly
-  if the corpus or `unzip` is absent.
+  `$RECYCLE.BIN`; `file1.txt` is MFT record 37). The NTFS backend and its test
+  now live in `forensic-vfs-engine`; this entry is retained only as historical
+  provenance and is no longer consumed by a 4n6mount test.
 - **Archives (zip / tar.gz / 7z):** minted at test time with the system
   `zip` / `tar` / `7z` CLIs (independent oracles); tests skip if a tool is
   missing.
