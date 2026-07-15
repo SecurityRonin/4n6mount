@@ -121,121 +121,20 @@ fn main() {
         return;
     }
 
-    let fs_type = if let Some(fs_str) = &cli.fs {
-        fs_str
-            .parse::<forensic_mount::detect::FsType>()
-            .unwrap_or_else(|e| {
-                eprintln!("{e}");
-                std::process::exit(1);
-            })
-    } else {
-        forensic_mount::detect::detect_filesystem(&mut file).unwrap_or_else(|e| {
-            eprintln!("Detection failed: {e}");
-            std::process::exit(1);
-        })
-    };
+    // A forced disk fs type is no longer honored: the engine's `open()`
+    // auto-detects the container, partitions, and filesystem. Only `--fs
+    // memory`/`mem` (handled above) still forces a route.
+    if let Some(x) = &cli.fs {
+        eprintln!("note: --fs {x} ignored; auto-detecting (partition-aware)");
+    }
 
-    // AFF4 containers are ZIP archives with no magic bytes, so a byte probe
-    // classifies them as Zip; refine an auto-detected Zip by reading the AFF4
-    // information.turtle. A forced `--fs` is respected as-is.
-    #[cfg(feature = "aff4")]
-    let fs_type = if cli.fs.is_none() && fs_type == forensic_mount::detect::FsType::Zip {
-        forensic_mount::detect::detect_aff4(std::path::Path::new(&image)).unwrap_or(fs_type)
-    } else {
-        fs_type
-    };
-
-    eprintln!("Detected filesystem: {fs_type}");
-
-    // Compute a fallback name for raw (Unknown) mounts from the image basename.
-    let image_name = std::path::Path::new(&image).file_name().map_or_else(
-        || "evidence.bin".to_string(),
-        |n| n.to_string_lossy().to_string(),
-    );
-
-    // Create the ForensicFs. Container formats (EWF/VMDK) are opened here, then
-    // their inner filesystem is detected and built; every other type — disk
-    // filesystems and archives alike — is built directly from the image file.
-    // Seekable-stream formats funnel through `build_filesystem` (the `other`
-    // arm). Containers (EWF/VMDK) re-detect and mount their inner filesystem;
-    // AD1 is a logical tree opened by path, so it builds its ForensicFs directly.
-    let forensic_fs: Box<dyn forensic_mount::ForensicFs + Send> = match fs_type {
-        #[cfg(feature = "vmdk")]
-        forensic_mount::detect::FsType::Vmdk => {
-            let mut vmdk_reader = vmdk::VmdkFileReader::open_path(std::path::Path::new(&image))
-                .unwrap_or_else(|e| {
-                    eprintln!("Cannot open VMDK image: {e}");
-                    std::process::exit(1);
-                });
-            let inner = forensic_mount::detect::detect_filesystem(&mut vmdk_reader)
-                .unwrap_or(forensic_mount::detect::FsType::Unknown);
-            eprintln!("VMDK container detected, inner filesystem: {inner}");
-            forensic_mount::build_filesystem(vmdk_reader, inner, &image_name).unwrap_or_else(|e| {
-                eprintln!("Cannot mount filesystem inside VMDK: {e}");
-                std::process::exit(1);
-            })
-        }
-        #[cfg(feature = "ewf")]
-        forensic_mount::detect::FsType::Ewf => {
-            let mut ewf_reader = ewf::EwfReader::open(&image).unwrap_or_else(|e| {
-                eprintln!("Cannot open EWF image: {e}");
-                std::process::exit(1);
-            });
-            let inner = forensic_mount::detect::detect_filesystem(&mut ewf_reader)
-                .unwrap_or(forensic_mount::detect::FsType::Unknown);
-            eprintln!("EWF container detected, inner filesystem: {inner}");
-            forensic_mount::build_filesystem(ewf_reader, inner, &image_name).unwrap_or_else(|e| {
-                eprintln!("Cannot mount filesystem inside EWF: {e}");
-                std::process::exit(1);
-            })
-        }
-        #[cfg(feature = "ad1")]
-        forensic_mount::detect::FsType::Ad1 => {
-            // AD1 is a logical file tree, not a seekable disk stream, and it
-            // opens by path to discover sibling `.ad2…` segments — so it builds
-            // the ForensicFs directly instead of funnelling through
-            // `build_filesystem`. Encrypted (ADCRYPT) images surface here as a
-            // NotSupported error and are refused, not mounted.
-            let fs = forensic_mount::fs_ad1::Ad1ForensicFs::open(std::path::Path::new(&image))
-                .unwrap_or_else(|e| {
-                    eprintln!("Cannot open AD1 image: {e}");
-                    std::process::exit(1);
-                });
-            Box::new(fs)
-        }
-        #[cfg(feature = "aff4")]
-        forensic_mount::detect::FsType::Aff4Logical => {
-            // AFF4-Logical is a file collection (like AD1) opened by path.
-            let fs = forensic_mount::fs_aff4::Aff4ForensicFs::open(std::path::Path::new(&image))
-                .unwrap_or_else(|e| {
-                    eprintln!("Cannot open AFF4-Logical container: {e}");
-                    std::process::exit(1);
-                });
-            Box::new(fs)
-        }
-        #[cfg(feature = "aff4")]
-        forensic_mount::detect::FsType::Aff4Disk => {
-            // An AFF4 disk image is a Read+Seek stream (like EWF/VMDK): open it,
-            // re-detect the inner filesystem, and mount that. Encrypted images
-            // are refused here with a clear error.
-            let mut reader =
-                aff4::Aff4Reader::open(std::path::Path::new(&image)).unwrap_or_else(|e| {
-                    eprintln!("Cannot open AFF4 disk image: {e}");
-                    std::process::exit(1);
-                });
-            let inner = forensic_mount::detect::detect_filesystem(&mut reader)
-                .unwrap_or(forensic_mount::detect::FsType::Unknown);
-            eprintln!("AFF4 disk image detected, inner filesystem: {inner}");
-            forensic_mount::build_filesystem(reader, inner, &image_name).unwrap_or_else(|e| {
-                eprintln!("Cannot mount filesystem inside AFF4: {e}");
-                std::process::exit(1);
-            })
-        }
-        other => forensic_mount::build_filesystem(file, other, &image_name).unwrap_or_else(|e| {
-            eprintln!("{e}");
-            std::process::exit(1);
-        }),
-    };
+    // Hand the image to the engine's one entry point. It decodes any container
+    // (E01/VMDK/AFF4-disk/QCOW2/VHD/VHDX/DMG), enumerates partitions, routes
+    // logical collections (AD1/AFF4-Logical/DAR), and falls back to a raw file.
+    let forensic_fs = forensic_vfs_engine::open(std::path::Path::new(&image)).unwrap_or_else(|e| {
+        eprintln!("Cannot mount {image}: {e}");
+        std::process::exit(1);
+    });
 
     // Build session if requested
     let session_mgr = cli.session.map(|dir| {
@@ -258,7 +157,7 @@ fn main() {
     let options = forensic_mount::MountOptions {
         read_only: session_mgr.is_none(),
         daemon: cli.daemon,
-        fs_name: format!("4n6mount-{fs_type}"),
+        fs_name: "4n6mount".to_string(),
         layout: forensic_mount::MountLayout::DiskOverlay,
     };
 

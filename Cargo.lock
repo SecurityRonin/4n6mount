@@ -9,8 +9,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7e59ecdd8e435477b9e7ef0b2ca8d93377fb152cb69ce3939c4c1b4eeb6abbd4"
 dependencies = [
  "flate2",
- "md-5",
- "sha1",
  "thiserror 2.0.18",
 ]
 
@@ -85,7 +83,6 @@ dependencies = [
  "snap",
  "thiserror 2.0.18",
  "xts-mode",
- "zip",
  "zip-forensic-core",
 ]
 
@@ -205,6 +202,22 @@ dependencies = [
  "lzfse_rust",
  "lzvn-core",
  "thiserror 2.0.18",
+]
+
+[[package]]
+name = "apm-partition-core"
+version = "0.6.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e21b0463a2dd58c2a2dafc1bcdcb4c2cad1406b7547153d577ff94b9b4dffb8f"
+
+[[package]]
+name = "apm-partition-forensic"
+version = "0.6.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9f18d5749940032b36aa4f0aaed9c21d3bd73d91c757b03756ecaccaf7b956da"
+dependencies = [
+ "apm-partition-core",
+ "forensicnomicon",
 ]
 
 [[package]]
@@ -852,6 +865,16 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3d52eff69cd5e647efe296129160853a42795992097e8af39800e1060caeea9b"
 
 [[package]]
+name = "core-foundation"
+version = "0.10.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b2a6cd9ae233e7f62ba4e9353e81a88df7fc8a5987b8d445b4d90c879bd156f6"
+dependencies = [
+ "core-foundation-sys",
+ "libc",
+]
+
+[[package]]
 name = "core-foundation-sys"
 version = "0.8.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1140,6 +1163,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "dar-core"
+version = "0.7.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ec7a91e9e7a64576b95c8f953218cb4bc02876f3e707891f8ee4841fac882321"
+dependencies = [
+ "bzip2-rs",
+ "flate2",
+ "lz4_flex",
+ "lzma-rs",
+ "lzo",
+ "ruzstd 0.7.3",
+ "thiserror 2.0.18",
+]
+
+[[package]]
 name = "darling"
 version = "0.20.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1353,6 +1391,29 @@ dependencies = [
 ]
 
 [[package]]
+name = "disk-forensic"
+version = "0.11.0"
+dependencies = [
+ "ad1-core",
+ "aff4",
+ "apm-partition-forensic",
+ "dar-core",
+ "dmg-core",
+ "ewf",
+ "forensicnomicon",
+ "gpt-partition-forensic",
+ "iso9660-forensic 0.7.0 (registry+https://github.com/rust-lang/crates.io-index)",
+ "livedisk-core",
+ "livedisk-forensic",
+ "mbr-partition-forensic",
+ "qcow2-core",
+ "thiserror 2.0.18",
+ "vhdx-core",
+ "vmdk-core",
+ "vmdk-forensic",
+]
+
+[[package]]
 name = "displaydoc"
 version = "0.2.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1361,6 +1422,21 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 2.0.118",
+]
+
+[[package]]
+name = "dmg-core"
+version = "0.1.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b080213128c794ab5888ea674d297c5250e3946d5aa3f75be18837d373007092"
+dependencies = [
+ "base64",
+ "bzip2-rs",
+ "flate2",
+ "lzfse_rust",
+ "lzma-rs",
+ "quick-xml 0.41.0",
+ "thiserror 2.0.18",
 ]
 
 [[package]]
@@ -1547,8 +1623,11 @@ dependencies = [
 
 [[package]]
 name = "ewf"
-version = "0.2.3"
+version = "0.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c7b5e81c6ce862c8787977bfa243e5d8dd67e9deb79c00a496695e90533ea7df"
 dependencies = [
+ "adler2",
  "flate2",
  "glob",
  "log",
@@ -1718,19 +1797,10 @@ checksum = "77ce24cb58228fbb8aa041425bb1050850ac19177686ea6e0f41a70416f56fdb"
 name = "forensic-mount"
 version = "0.5.0"
 dependencies = [
- "ad1-core",
- "aff4",
- "apfs-core",
- "bzip2",
  "clap",
  "dokan",
- "ewf",
- "exfat-fs",
- "ext4fs-core",
- "flate2",
+ "forensic-vfs-engine",
  "fuser",
- "hfsplus-forensic",
- "iso9660-forensic",
  "libc",
  "md-5",
  "memf-core",
@@ -1739,24 +1809,38 @@ dependencies = [
  "memf-session",
  "memf-symbols",
  "memf-windows",
- "ntfs-core",
  "rusqlite",
  "serde",
  "serde_json",
- "sevenz-rust",
  "sha2",
- "tar",
- "tempfile",
- "vmdk-core",
  "widestring",
+]
+
+[[package]]
+name = "forensic-vfs-engine"
+version = "0.1.0"
+dependencies = [
+ "apfs-core",
+ "bzip2",
+ "disk-forensic",
+ "exfat-fs",
+ "ext4fs-core",
+ "flate2",
+ "hfsplus-forensic",
+ "iso9660-forensic 0.7.0",
+ "ntfs-core",
+ "serde",
+ "serde_json",
+ "sevenz-rust",
+ "tar",
  "zip",
 ]
 
 [[package]]
 name = "forensicnomicon"
-version = "1.0.0"
+version = "1.6.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8ed4548e40fc4f7f22f769ba68afbb426c379c168ea4ab019421f10d91fa3b4e"
+checksum = "67913b90ecf5c59b7d507927fc1ec496413ec252ffb6734f15876726b8fc7221"
 dependencies = [
  "forensicnomicon-core",
  "forensicnomicon-data",
@@ -1765,18 +1849,18 @@ dependencies = [
 
 [[package]]
 name = "forensicnomicon-core"
-version = "1.0.0"
+version = "1.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f5d5b96ffd37d1e758a1657839de8b4d5e7bfc024a5500509d07ff7acd7b9461"
+checksum = "b81fa3bf717c97e0b7a877f30e6bf4abaf9dca751d970dab9292d03ae757d152"
 dependencies = [
  "serde",
 ]
 
 [[package]]
 name = "forensicnomicon-data"
-version = "1.0.0"
+version = "1.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "664814f07d95790e9c38a9c2c3a0a5539ba4e1ef8e4de72cf32424fc397364ba"
+checksum = "81a1473002767608b095a3dcd657ffb3c4c6e421c5cfe9fdca70a30fe477e0b7"
 dependencies = [
  "forensicnomicon-core",
  "serde",
@@ -2050,6 +2134,27 @@ dependencies = [
  "log",
  "plain",
  "scroll 0.12.0",
+]
+
+[[package]]
+name = "gpt-partition-core"
+version = "0.6.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2a93948f6b9376725c4e3b671e49c4433bc21c790aba488b8b991a522810f4f6"
+dependencies = [
+ "forensicnomicon",
+ "thiserror 2.0.18",
+]
+
+[[package]]
+name = "gpt-partition-forensic"
+version = "0.6.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "251b3a8eac5e548295abc5d006e0a0320a3ae017ff2f04cc46633618bc8a89ea"
+dependencies = [
+ "forensicnomicon",
+ "gpt-partition-core",
+ "thiserror 2.0.18",
 ]
 
 [[package]]
@@ -2524,6 +2629,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "io-kit-sys"
+version = "0.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "06d3a048d09fbb6597dbf7c69f40d14df4a49487db1487191618c893fc3b1c26"
+dependencies = [
+ "core-foundation-sys",
+ "mach2 0.5.0",
+]
+
+[[package]]
 name = "io-uring"
 version = "0.6.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2548,6 +2663,18 @@ checksum = "a6cb138bb79a146c1bd460005623e142ef0181e3d0219cb493e02f7d08a35695"
 [[package]]
 name = "iso9660-forensic"
 version = "0.7.0"
+dependencies = [
+ "forensicnomicon",
+ "sha1",
+ "sha2",
+ "thiserror 2.0.18",
+]
+
+[[package]]
+name = "iso9660-forensic"
+version = "0.7.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6b77f6effe2ef3674372cf74bc15a7b518c50f9c588712dc6fe499a0218b8155"
 dependencies = [
  "forensicnomicon",
  "sha1",
@@ -2767,6 +2894,29 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "92daf443525c4cce67b150400bc2316076100ce0b3686209eb8cf3c31612e6f0"
 
 [[package]]
+name = "livedisk-core"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8cc84b603ad46aa5182980212abf7a19449ce732eb776b96f8bd2c1730b4ed05"
+dependencies = [
+ "core-foundation",
+ "core-foundation-sys",
+ "io-kit-sys",
+ "thiserror 2.0.18",
+ "windows-sys 0.61.2",
+]
+
+[[package]]
+name = "livedisk-forensic"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "37b3081fdbf00a808474d18e97e10a032e8c62ba18c177f66bdcbd777be108d9"
+dependencies = [
+ "forensicnomicon",
+ "livedisk-core",
+]
+
+[[package]]
 name = "lock_api"
 version = "0.4.14"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2845,7 +2995,7 @@ version = "0.11.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "373f5eceeeab7925e0c1098212f2fbc4d416adec9d35051a6ab251e824c1854a"
 dependencies = [
- "twox-hash",
+ "twox-hash 2.1.2",
 ]
 
 [[package]]
@@ -2915,6 +3065,36 @@ dependencies = [
 ]
 
 [[package]]
+name = "mach2"
+version = "0.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6a1b95cd5421ec55b445b5ae102f5ea0e768de1f82bd3001e11f426c269c3aea"
+dependencies = [
+ "libc",
+]
+
+[[package]]
+name = "mbr-partition-core"
+version = "0.6.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c61e1330bc1981e7abfd1a4a59cb9efd4b062ffbf2963b0ba6b58c3ec141d1b8"
+dependencies = [
+ "forensicnomicon",
+ "thiserror 2.0.18",
+]
+
+[[package]]
+name = "mbr-partition-forensic"
+version = "0.6.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "fa89b7a0063d89663516dfd46b2b546383b7a9469e4058f980ef400dde5f93a8"
+dependencies = [
+ "forensicnomicon",
+ "gpt-partition-forensic",
+ "mbr-partition-core",
+]
+
+[[package]]
 name = "md-5"
 version = "0.10.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2976,7 +3156,7 @@ dependencies = [
  "lru 0.16.4",
  "memmap2",
  "rust-lzxpress",
- "ruzstd",
+ "ruzstd 0.8.3",
  "snap",
  "thiserror 2.0.18",
 ]
@@ -3460,7 +3640,7 @@ dependencies = [
  "md-5",
  "monoio",
  "percent-encoding",
- "quick-xml",
+ "quick-xml 0.38.4",
  "reqwest",
  "serde",
  "serde_json",
@@ -3841,6 +4021,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "qcow2-core"
+version = "0.3.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "433a47c82a16af770359f26da72254245b8dcb328bf7a8c9c6ebf8d2d786def8"
+dependencies = [
+ "flate2",
+ "thiserror 2.0.18",
+]
+
+[[package]]
 name = "quick-xml"
 version = "0.38.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3848,6 +4038,15 @@ checksum = "b66c2058c55a409d601666cffe35f04333cf1013010882cec174a7467cd4e21c"
 dependencies = [
  "memchr",
  "serde",
+]
+
+[[package]]
+name = "quick-xml"
+version = "0.41.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e660451e55124f798a69a5af3f49ccfbefbd41910eefd25caf2393e1f3473ec1"
+dependencies = [
+ "memchr",
 ]
 
 [[package]]
@@ -4335,11 +4534,20 @@ checksum = "b39cdef0fa800fc44525c84ccb54a029961a8215f9619753635a9c0d2538d46d"
 
 [[package]]
 name = "ruzstd"
+version = "0.7.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "fad02996bfc73da3e301efe90b1837be9ed8f4a462b6ed410aa35d00381de89f"
+dependencies = [
+ "twox-hash 1.6.3",
+]
+
+[[package]]
+name = "ruzstd"
 version = "0.8.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a7c1c839d570d835527c9a5e4db7cb2198683a988cb9d7293fc8674e6bd58fc8"
 dependencies = [
- "twox-hash",
+ "twox-hash 2.1.2",
 ]
 
 [[package]]
@@ -4694,6 +4902,12 @@ name = "stable_deref_trait"
 version = "1.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6ce2be8dc25455e1f91df71bfa12ad37d7af1092ae736f3a6cd0e37bc7810596"
+
+[[package]]
+name = "static_assertions"
+version = "1.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a2eb9349b6444b326872e140eb1cf5e7c522154d69e7a0ffb0fb81c06b37543f"
 
 [[package]]
 name = "streebog"
@@ -5128,6 +5342,16 @@ checksum = "e421abadd41a4225275504ea4d6566923418b7f05506fbc9c0fe86ba7396114b"
 
 [[package]]
 name = "twox-hash"
+version = "1.6.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "97fee6b57c6a41524a810daee9286c02d7752c4253064d0b05472833a438f675"
+dependencies = [
+ "cfg-if",
+ "static_assertions",
+]
+
+[[package]]
+name = "twox-hash"
 version = "2.1.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9ea3136b675547379c4bd395ca6b938e5ad3c3d20fad76e7fe85f9e0d011419c"
@@ -5281,13 +5505,34 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0b928f33d975fc6ad9f86c8f283853ad26bdd5b10b7f1542aa2fa15e2289105a"
 
 [[package]]
+name = "vhdx-core"
+version = "0.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2a2aba7c23ae8ca0d4b383a868cb7e1540c32f0503af0c1a020124bf10716d04"
+dependencies = [
+ "thiserror 2.0.18",
+]
+
+[[package]]
 name = "vmdk-core"
 version = "0.8.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "863c8c23d84435523ae687231caae9f6933ed116b1179b3122044887bb57a768"
 dependencies = [
  "flate2",
  "md-5",
  "sha2",
  "thiserror 2.0.18",
+]
+
+[[package]]
+name = "vmdk-forensic"
+version = "0.8.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d0087b0e4561978aa1d6792db964fd7fdf527e123aa4f7b9c048b398be142cca"
+dependencies = [
+ "forensicnomicon",
+ "vmdk-core",
 ]
 
 [[package]]
@@ -5493,7 +5738,7 @@ dependencies = [
  "libc",
  "libm",
  "log",
- "mach2",
+ "mach2 0.4.3",
  "memfd",
  "object 0.36.7",
  "once_cell",
@@ -6439,7 +6684,7 @@ dependencies = [
  "hmac",
  "lzma-rs",
  "pbkdf2",
- "ruzstd",
+ "ruzstd 0.8.3",
  "sha1",
  "thiserror 2.0.18",
 ]

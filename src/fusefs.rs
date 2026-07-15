@@ -6,8 +6,8 @@ use crate::inode_map::{
     FUSE_RO_INO, FUSE_RW_INO, FUSE_SESSION_INO, FUSE_UNALLOCATED_INO,
 };
 use crate::session::Session;
-use crate::types::{FsBlockRange, FsEventType, FsFileType, FsMetadata, FsTimestamp};
 use crate::ForensicFs;
+use crate::{FsBlockRange, FsEventType, FsFileType, FsMetadata, FsTimestamp};
 use fuser::{
     FileAttr, FileType, Filesystem, ReplyAttr, ReplyCreate, ReplyData, ReplyDirectory, ReplyEmpty,
     ReplyEntry, ReplyWrite, Request, TimeOrNow,
