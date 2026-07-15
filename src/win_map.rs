@@ -11,7 +11,7 @@
 
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use crate::types::{FsFileType, FsTimestamp};
+use crate::{FsFileType, FsTimestamp};
 
 /// `FILE_ATTRIBUTE_READONLY` — the file is read-only.
 pub const FILE_ATTRIBUTE_READONLY: u32 = 0x0000_0001;
