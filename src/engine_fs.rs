@@ -315,15 +315,73 @@ impl ForensicFs for EngineFs {
 
 /// Open a disk-image evidence file as a mountable [`ForensicFs`].
 ///
-/// Hands the image to the engine's partition-aware `Vfs::open`, which decodes any
-/// container, enumerates partitions, and mounts the detected filesystem.
+/// Transparently peels an OUTER compression wrapper (`evidence.dd.gz` -> `dd`)
+/// via `archive-core` — but only when the content magic AND the file extension
+/// agree, so a raw disk with coincidental magic still opens as raw — then hands
+/// the (inner or original) image to the engine's partition-aware `Vfs::open`.
 ///
 /// # Errors
-/// Fails loud on an engine open/decode error, or when the engine detects no
-/// filesystem in the evidence (`InvalidData`).
+/// Fails loud on a peel decode error, an engine open/decode error, or when the
+/// engine detects no filesystem in the evidence (`InvalidData`).
 pub fn open_image(path: &Path) -> io::Result<Box<dyn ForensicFs + Send>> {
+    if let Some(tmp) = try_peel_to_tmp(path)? {
+        let fs = mount_engine(tmp.path())?;
+        return Ok(Box::new(EngineFs::new(fs, Some(tmp.into_temp_path()))));
+    }
     let fs = mount_engine(path)?;
     Ok(Box::new(EngineFs::new(fs, None)))
+}
+
+/// Attempt to peel one outer compression wrapper, spilling the inner image to a
+/// temp file. Returns `None` when `path` is not a compression wrapper (so the
+/// caller opens it directly), and an error only when a genuinely-named wrapper
+/// fails to decode. Mirrors `disk_forensic::container::try_peel`.
+fn try_peel_to_tmp(path: &Path) -> io::Result<Option<tempfile::NamedTempFile>> {
+    use std::io::{Read, Write};
+
+    let name = path.file_name().and_then(|n| n.to_str());
+    // Sniff the head only — never slurp a large non-wrapper image.
+    let mut head = [0u8; 16];
+    let read = {
+        let mut file = std::fs::File::open(path)?;
+        file.read(&mut head)?
+    };
+    if !archive_core::sniff(name, &head[..read]).is_compression_wrapper() {
+        return Ok(None);
+    }
+    // Require the extension to agree — a raw disk with coincidental compression
+    // magic but no compression extension must open as raw, not be mis-peeled.
+    let Some(name) = name else {
+        return Ok(None);
+    };
+    if !has_compression_ext(name) {
+        return Ok(None);
+    }
+    let data = std::fs::read(path)?;
+    match archive_core::peel_bytes(&data, Some(name)) {
+        Ok(archive_core::PeelOutcome::Peeled { inner, .. }) => {
+            let mut tmp = tempfile::Builder::new().suffix(".img").tempfile()?;
+            tmp.write_all(&inner)?;
+            tmp.flush()?;
+            Ok(Some(tmp))
+        }
+        Ok(_) => Ok(None),
+        Err(e) => Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!("archive peel failed: {e}"),
+        )),
+    }
+}
+
+/// Does the file name carry a compression-wrapper extension?
+fn has_compression_ext(name: &str) -> bool {
+    let lower = name.to_ascii_lowercase();
+    [
+        ".gz", ".bz2", ".xz", ".tgz", ".taz", ".tbz", ".tbz2", ".txz", ".tzst", ".tlz", ".zst",
+        ".z",
+    ]
+    .iter()
+    .any(|e| lower.ends_with(e))
 }
 
 /// Run the engine's partition-aware open on `path` and require a filesystem.

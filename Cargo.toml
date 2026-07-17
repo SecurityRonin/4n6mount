@@ -40,6 +40,9 @@ forensic-vfs-engine = { version = "0.1", path = "../forensic-vfs-engine" }
 # (not a path dep) so it unifies with the copy the engine links — a path dep
 # would compile a second, incompatible `DynFs`/`FileId`.
 forensic-vfs = "0.3"
+# Archive-detour reader: transparently peels a gzip/bzip2/xz compression wrapper
+# (evidence.dd.gz -> dd) before the engine opens the inner image.
+archive-core = { version = "0.1.0", path = "../archive-forensic/core" }
 tempfile = "3"
 memf-format = { version = "0.2", path = "../memory-forensic/crates/memf-format", optional = true }
 memf-core = { version = "0.2", path = "../memory-forensic/crates/memf-core", optional = true }
