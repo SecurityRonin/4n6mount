@@ -16,17 +16,93 @@ pub mod fuse_windows;
 #[cfg(feature = "memory")]
 pub mod mem;
 
-// The `ForensicFs` trait, the shared Fs* types, and every FS/archive backend now
-// live in `forensic-vfs-engine`. Re-export them so `crate::ForensicFs` and the
-// `crate::Fs*` types still resolve for the FUSE/session/memory adapters here.
-pub use forensic_vfs_engine::{
-    not_found, not_supported, ForensicFs, FsBlockRange, FsDeletedInode, FsDirEntry, FsError,
-    FsEventType, FsFileType, FsMetadata, FsRecoveryResult, FsResult, FsTimelineEvent, FsTimestamp,
-    FsTransaction,
-};
+// 4n6mount owns its FUSE-facing filesystem contract: the `ForensicFs` trait and
+// its `Fs*` value types (implemented by both the memory VFS and the disk-image
+// `EngineFs` adapter over `forensic-vfs`). The engine now speaks a different,
+// inode-enum `FileSystem` trait; `EngineFs` bridges it into this one.
+pub mod engine_fs;
+pub mod types;
+
+pub use engine_fs::{open_image, EngineFs};
+pub use types::*;
 
 use std::io;
 use std::path::Path;
+
+/// One mounted, browsable forensic filesystem, in 4n6mount's own `u64`-inode
+/// vocabulary. A backend (the memory VFS, or [`EngineFs`] over a disk image)
+/// converts its native model into these calls; the FUSE/Dokan mount layer
+/// consumes them directly.
+///
+/// The core navigation ops are required. The forensic ops have default impls so
+/// a backend that cannot honor one degrades cleanly (an empty list, or a loud
+/// `NotSupported` for the byte-producing ones).
+pub trait ForensicFs {
+    // --- Core filesystem ops (required) ---
+
+    /// The root directory inode number for this filesystem.
+    fn root_ino(&self) -> u64;
+
+    /// List directory entries for the given inode.
+    fn read_dir(&mut self, ino: u64) -> FsResult<Vec<FsDirEntry>>;
+
+    /// Look up a name in a directory, returning the child inode if found.
+    fn lookup(&mut self, parent_ino: u64, name: &[u8]) -> FsResult<Option<u64>>;
+
+    /// Get file/directory metadata for an inode.
+    fn metadata(&mut self, ino: u64) -> FsResult<FsMetadata>;
+
+    /// Read the entire contents of a file.
+    fn read_file(&mut self, ino: u64) -> FsResult<Vec<u8>>;
+
+    /// Read a range of bytes from a file.
+    fn read_file_range(&mut self, ino: u64, offset: u64, len: u64) -> FsResult<Vec<u8>>;
+
+    /// Read the target of a symbolic link.
+    fn read_link(&mut self, ino: u64) -> FsResult<Vec<u8>>;
+
+    // --- Forensic ops (optional) ---
+
+    /// List deleted inodes.
+    fn deleted_inodes(&mut self) -> FsResult<Vec<FsDeletedInode>> {
+        Ok(vec![])
+    }
+
+    /// Attempt to recover a deleted file by inode number.
+    fn recover_file(&mut self, _ino: u64) -> FsResult<FsRecoveryResult> {
+        Err(not_supported("recover_file"))
+    }
+
+    /// Generate a forensic timeline of all filesystem events.
+    fn timeline(&mut self) -> FsResult<Vec<FsTimelineEvent>> {
+        Ok(vec![])
+    }
+
+    /// Get all unallocated block ranges.
+    fn unallocated_blocks(&mut self) -> FsResult<Vec<FsBlockRange>> {
+        Ok(vec![])
+    }
+
+    /// Read raw data from an unallocated block range.
+    fn read_unallocated(&mut self, _range: &FsBlockRange) -> FsResult<Vec<u8>> {
+        Err(not_supported("read_unallocated"))
+    }
+
+    /// List journal transactions.
+    fn journal_transactions(&mut self) -> FsResult<Vec<FsTransaction>> {
+        Ok(vec![])
+    }
+
+    /// Get filesystem-specific info as JSON (superblock, volume label, etc.).
+    fn fs_info(&self) -> FsResult<serde_json::Value> {
+        Ok(serde_json::Value::Null)
+    }
+
+    /// The block size of this filesystem.
+    fn block_size(&self) -> u64 {
+        4096
+    }
+}
 
 /// How the FUSE mount renders a [`ForensicFs`].
 ///

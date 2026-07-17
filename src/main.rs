@@ -128,13 +128,15 @@ fn main() {
         eprintln!("note: --fs {x} ignored; auto-detecting (partition-aware)");
     }
 
-    // Hand the image to the engine's one entry point. It decodes any container
-    // (E01/VMDK/AFF4-disk/QCOW2/VHD/VHDX/DMG), enumerates partitions, routes
-    // logical collections (AD1/AFF4-Logical/DAR), and falls back to a raw file.
-    let forensic_fs = forensic_vfs_engine::open(std::path::Path::new(&image)).unwrap_or_else(|e| {
-        eprintln!("Cannot mount {image}: {e}");
-        std::process::exit(1);
-    });
+    // Hand the image to 4n6mount's open path: it peels an outer compression
+    // wrapper (evidence.dd.gz -> dd) via archive-core, then the engine decodes
+    // any container (E01/VMDK/QCOW2/VHD/VHDX/DMG), enumerates partitions, and
+    // mounts the detected filesystem — failing loud if none is found.
+    let forensic_fs =
+        forensic_mount::open_image(std::path::Path::new(&image)).unwrap_or_else(|e| {
+            eprintln!("Cannot mount {image}: {e}");
+            std::process::exit(1);
+        });
 
     // Build session if requested
     let session_mgr = cli.session.map(|dir| {

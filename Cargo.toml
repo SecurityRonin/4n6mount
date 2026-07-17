@@ -25,27 +25,22 @@ name = "mkdump"
 required-features = ["memory"]
 
 [features]
-# FS/archive backends forward to forensic-vfs-engine, which owns the readers and
-# the format on-ramp. Container formats (EWF/VMDK/AFF4-disk/QCOW2/VHD/VHDX/DMG)
-# and logical collections (AD1/AFF4-Logical/DAR) are handled inside the engine's
-# `open()` via disk-forensic, so they are no longer standalone features here.
-default = ["ext4", "iso", "tarball", "zip", "sevenz", "ntfs", "hfsplus", "exfat", "apfs"]
-ext4 = ["forensic-vfs-engine/ext4"]
-iso = ["forensic-vfs-engine/iso"]
-ntfs = ["forensic-vfs-engine/ntfs"]
-hfsplus = ["forensic-vfs-engine/hfsplus"]
-exfat = ["forensic-vfs-engine/exfat"]
-apfs = ["forensic-vfs-engine/apfs"]
-tarball = ["forensic-vfs-engine/tarball"]
-zip = ["forensic-vfs-engine/zip"]
-sevenz = ["forensic-vfs-engine/sevenz"]
+# The forensic-vfs engine is batteries-included: every filesystem/container
+# reader is compiled in, so there are no per-format features to forward. Only
+# the memory-dump mount (memf) stays opt-in — it pulls a large analysis stack.
+default = []
 memory = ["dep:memf-format", "dep:memf-core", "dep:memf-session", "dep:memf-symbols", "dep:memf-windows", "dep:memf-linux"]
 
 [dependencies]
 clap = { version = "4", features = ["derive"] }
-# The forensic VFS engine: the `ForensicFs` trait, the shared Fs* types, every
-# FS/archive backend, and the partition-aware `open()` entry point.
-forensic-vfs-engine = { version = "0.1", path = "../forensic-vfs-engine", default-features = false }
+# The forensic VFS engine: the partition-aware `Vfs::open()` entry point that
+# detects the container/volume/filesystem stack and mounts a `dyn FileSystem`.
+forensic-vfs-engine = { version = "0.1", path = "../forensic-vfs-engine" }
+# The `FileSystem` navigation contract + its `Fs*` value types. Registry version
+# (not a path dep) so it unifies with the copy the engine links — a path dep
+# would compile a second, incompatible `DynFs`/`FileId`.
+forensic-vfs = "0.3"
+tempfile = "3"
 memf-format = { version = "0.2", path = "../memory-forensic/crates/memf-format", optional = true }
 memf-core = { version = "0.2", path = "../memory-forensic/crates/memf-core", optional = true }
 memf-session = { version = "0.3", path = "../memory-forensic/crates/memf-session", optional = true }
