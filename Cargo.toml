@@ -56,6 +56,10 @@ libc = "0.2"
 
 # FUSE backend is Unix-only (libfuse / macFUSE). On Windows the mount layer uses
 # Dokan instead (see the windows target table below).
+[dev-dependencies]
+# The peel_open integration test gzips a fixture to prove the archive-detour.
+flate2 = "1"
+
 [target.'cfg(unix)'.dependencies]
 fuser = "0.15"
 
