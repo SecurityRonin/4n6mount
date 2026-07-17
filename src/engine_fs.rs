@@ -340,7 +340,9 @@ fn try_peel_to_tmp(path: &Path) -> io::Result<Option<tempfile::NamedTempFile>> {
     use std::io::{Read, Write};
 
     let name = path.file_name().and_then(|n| n.to_str());
-    // Sniff the head only — never slurp a large non-wrapper image.
+    // Sniff the head only — never slurp a large non-wrapper image. Only
+    // compression wrappers are peeled here; the sniff/decode/guard policy (incl.
+    // the coincidental-magic guard) lives once in archive_core::peel_detour.
     let mut head = [0u8; 16];
     let read = {
         let mut file = std::fs::File::open(path)?;
@@ -349,39 +351,20 @@ fn try_peel_to_tmp(path: &Path) -> io::Result<Option<tempfile::NamedTempFile>> {
     if !archive_core::sniff(name, &head[..read]).is_compression_wrapper() {
         return Ok(None);
     }
-    // Require the extension to agree — a raw disk with coincidental compression
-    // magic but no compression extension must open as raw, not be mis-peeled.
-    let Some(name) = name else {
-        return Ok(None);
-    };
-    if !has_compression_ext(name) {
-        return Ok(None);
-    }
     let data = std::fs::read(path)?;
-    match archive_core::peel_bytes(&data, Some(name)) {
-        Ok(archive_core::PeelOutcome::Peeled { inner, .. }) => {
+    match archive_core::peel_detour(&data, name, &archive_core::Limits::default()) {
+        Ok(archive_core::Detour::Inner(inner)) => {
             let mut tmp = tempfile::Builder::new().suffix(".img").tempfile()?;
             tmp.write_all(&inner)?;
             tmp.flush()?;
             Ok(Some(tmp))
         }
-        Ok(_) => Ok(None),
+        Ok(archive_core::Detour::NotPacked) => Ok(None),
         Err(e) => Err(io::Error::new(
             io::ErrorKind::InvalidData,
             format!("archive peel failed: {e}"),
         )),
     }
-}
-
-/// Does the file name carry a compression-wrapper extension?
-fn has_compression_ext(name: &str) -> bool {
-    let lower = name.to_ascii_lowercase();
-    [
-        ".gz", ".bz2", ".xz", ".tgz", ".taz", ".tbz", ".tbz2", ".txz", ".tzst", ".tlz", ".zst",
-        ".z",
-    ]
-    .iter()
-    .any(|e| lower.ends_with(e))
 }
 
 /// Run the engine's partition-aware open on `path` and require a filesystem.
