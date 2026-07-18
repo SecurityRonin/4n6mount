@@ -1,5 +1,5 @@
 //! End-to-end proof that `open_image` transparently peels an outer compression
-//! wrapper (`evidence.dd.gz`) via the archive-detour framework and mounts the
+//! wrapper (`evidence.dd.gz`) via the archive-layer framework and mounts the
 //! inner image through the engine — yielding the same filesystem as opening the
 //! raw fixture directly.
 

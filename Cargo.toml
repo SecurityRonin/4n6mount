@@ -40,7 +40,7 @@ forensic-vfs-engine = { version = "0.1", path = "../forensic-vfs-engine" }
 # (not a path dep) so it unifies with the copy the engine links — a path dep
 # would compile a second, incompatible `DynFs`/`FileId`.
 forensic-vfs = "0.3"
-# Archive-detour reader: transparently peels a gzip/bzip2/xz compression wrapper
+# Archive-layer reader: transparently peels a gzip/bzip2/xz compression wrapper
 # (evidence.dd.gz -> dd) before the engine opens the inner image.
 archive-core = { version = "0.1.0", path = "../archive-forensic/core" }
 tempfile = "3"
@@ -60,7 +60,7 @@ libc = "0.2"
 # FUSE backend is Unix-only (libfuse / macFUSE). On Windows the mount layer uses
 # Dokan instead (see the windows target table below).
 [dev-dependencies]
-# The peel_open integration test gzips a fixture to prove the archive-detour.
+# The peel_open integration test gzips a fixture to prove the archive-layer peel.
 flate2 = "1"
 
 [target.'cfg(unix)'.dependencies]

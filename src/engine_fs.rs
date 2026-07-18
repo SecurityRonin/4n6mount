@@ -342,7 +342,7 @@ fn try_peel_to_tmp(path: &Path) -> io::Result<Option<tempfile::NamedTempFile>> {
     let name = path.file_name().and_then(|n| n.to_str());
     // Sniff the head only — never slurp a large non-wrapper image. Only
     // compression wrappers are peeled here; the sniff/decode/guard policy (incl.
-    // the coincidental-magic guard) lives once in archive_core::peel_detour.
+    // the coincidental-magic guard) lives once in archive_core::peel_archive.
     let mut head = [0u8; 16];
     let read = {
         let mut file = std::fs::File::open(path)?;
@@ -352,14 +352,14 @@ fn try_peel_to_tmp(path: &Path) -> io::Result<Option<tempfile::NamedTempFile>> {
         return Ok(None);
     }
     let data = std::fs::read(path)?;
-    match archive_core::peel_detour(&data, name, &archive_core::Limits::default()) {
-        Ok(archive_core::Detour::Inner(inner)) => {
+    match archive_core::peel_archive(&data, name, &archive_core::Limits::default()) {
+        Ok(archive_core::Peel::Inner(inner)) => {
             let mut tmp = tempfile::Builder::new().suffix(".img").tempfile()?;
             tmp.write_all(&inner)?;
             tmp.flush()?;
             Ok(Some(tmp))
         }
-        Ok(archive_core::Detour::NotPacked) => Ok(None),
+        Ok(archive_core::Peel::NotPacked) => Ok(None),
         Err(e) => Err(io::Error::new(
             io::ErrorKind::InvalidData,
             format!("archive peel failed: {e}"),
