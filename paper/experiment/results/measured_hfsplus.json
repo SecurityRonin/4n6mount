@@ -1,0 +1,137 @@
+{
+  "fs": "hfsplus",
+  "files": {
+    "short83": {
+      "class": "tiny-short-8.3",
+      "name": "AB.TXT",
+      "t1": {
+        "l3": "match",
+        "l3_chunks": "1/1",
+        "l1": "none",
+        "l1_recovered": null,
+        "l2": "none",
+        "l2_icat_ok": false,
+        "istat_blocks": 0
+      },
+      "t2": {
+        "l3": "none",
+        "l3_chunks": "0/1",
+        "l1": "none",
+        "l1_recovered": null,
+        "l2": "none",
+        "l2_icat_ok": false,
+        "istat_blocks": 0
+      }
+    },
+    "lfn": {
+      "class": "tiny-longname-LFN",
+      "name": "evidence_report_final_copy.txt",
+      "t1": {
+        "l3": "match",
+        "l3_chunks": "1/1",
+        "l1": "none",
+        "l1_recovered": null,
+        "l2": "none",
+        "l2_icat_ok": false,
+        "istat_blocks": 0
+      },
+      "t2": {
+        "l3": "none",
+        "l3_chunks": "0/1",
+        "l1": "none",
+        "l1_recovered": null,
+        "l2": "none",
+        "l2_icat_ok": false,
+        "istat_blocks": 0
+      }
+    },
+    "unicode": {
+      "class": "tiny-unicode-name",
+      "name": "秘密資料.txt",
+      "t1": {
+        "l3": "match",
+        "l3_chunks": "1/1",
+        "l1": "none",
+        "l1_recovered": null,
+        "l2": "none",
+        "l2_icat_ok": false,
+        "istat_blocks": 0
+      },
+      "t2": {
+        "l3": "none",
+        "l3_chunks": "0/1",
+        "l1": "none",
+        "l1_recovered": null,
+        "l2": "none",
+        "l2_icat_ok": false,
+        "istat_blocks": 0
+      }
+    },
+    "deep": {
+      "class": "tiny-deep-path",
+      "name": "nested_secret.txt",
+      "t1": {
+        "l3": "match",
+        "l3_chunks": "1/1",
+        "l1": "none",
+        "l1_recovered": null,
+        "l2": "none",
+        "l2_icat_ok": false,
+        "istat_blocks": 0
+      },
+      "t2": {
+        "l3": "none",
+        "l3_chunks": "0/1",
+        "l1": "none",
+        "l1_recovered": null,
+        "l2": "none",
+        "l2_icat_ok": false,
+        "istat_blocks": 0
+      }
+    },
+    "contig": {
+      "class": "large-contiguous",
+      "name": "big_contiguous_blob.bin",
+      "t1": {
+        "l3": "match",
+        "l3_chunks": "256/256",
+        "l1": "none",
+        "l1_recovered": null,
+        "l2": "none",
+        "l2_icat_ok": false,
+        "istat_blocks": 0
+      },
+      "t2": {
+        "l3": "none",
+        "l3_chunks": "0/256",
+        "l1": "none",
+        "l1_recovered": null,
+        "l2": "none",
+        "l2_icat_ok": false,
+        "istat_blocks": 0
+      }
+    },
+    "frag": {
+      "class": "large-fragmented",
+      "name": "fragmented_blob.bin",
+      "t1": {
+        "l3": "match",
+        "l3_chunks": "256/256",
+        "l1": "none",
+        "l1_recovered": null,
+        "l2": "none",
+        "l2_icat_ok": false,
+        "istat_blocks": 0
+      },
+      "t2": {
+        "l3": "partial",
+        "l3_chunks": "96/256",
+        "l1": "none",
+        "l1_recovered": null,
+        "l2": "none",
+        "l2_icat_ok": false,
+        "istat_blocks": 0
+      }
+    }
+  }
+}
