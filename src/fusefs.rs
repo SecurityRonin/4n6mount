@@ -2916,4 +2916,36 @@ mod tests {
             assert!(!e.name.ends_with("_unknown"), "fabricated: {}", e.name);
         }
     }
+
+    #[test]
+    fn timeline_jsonl_carries_every_deleted_instance() {
+        let fuse = make_mock_fuse_mode(crate::DeletedMode::Latest);
+        fuse.ensure_metadata_cache();
+        let cache = fuse.metadata_cache.borrow();
+        let mc = cache.as_ref().expect("metadata cache populated");
+        let text = String::from_utf8_lossy(&mc.timeline_jsonl);
+        // A deleted-instance row is any JSONL line carrying a `placement` field.
+        let rows: Vec<serde_json::Value> = text
+            .lines()
+            .filter_map(|l| serde_json::from_str::<serde_json::Value>(l).ok())
+            .filter(|v| v.get("placement").is_some())
+            .collect();
+        // One row per deleted instance (all 5 mock nodes).
+        assert_eq!(rows.len(), 5, "one row per deleted instance");
+        // Every version of a same-named deleted file (grep by name).
+        let report: Vec<_> = rows.iter().filter(|r| r["name"] == "report.txt").collect();
+        assert_eq!(report.len(), 2, "both report.txt instances present");
+        assert!(report.iter().any(|r| r["placement"] == "in-place"));
+        assert!(report.iter().any(|r| r["placement"] == "orphan"));
+        // Required fields present on a row.
+        let r = &rows[0];
+        for f in ["path", "name", "record_id", "allocation", "status", "macb"] {
+            assert!(r.get(f).is_some(), "row missing {f}: {r}");
+        }
+        assert!(r["macb"].get("modified").is_some());
+        // Unreadable content surfaced honestly in the status.
+        assert!(rows
+            .iter()
+            .any(|r| r["name"] == "gone.txt" && r["status"] == "unreadable"));
+    }
 }
