@@ -2,7 +2,7 @@
 
 use crate::inode_map::{
     decode_fuse_ino, deleted_ino, journal_ino, metadata_ino, ro_ino, rw_ino, unallocated_ino,
-    InodeNamespace, FUSE_DELETED_INO, FUSE_JOURNAL_INO, FUSE_METADATA_INO, FUSE_ROOT_INO,
+    InodeNamespace, FUSE_JOURNAL_INO, FUSE_METADATA_INO, FUSE_ORPHANS_INO, FUSE_ROOT_INO,
     FUSE_RO_INO, FUSE_RW_INO, FUSE_SESSION_INO, FUSE_UNALLOCATED_INO,
 };
 use crate::session::Session;
@@ -20,20 +20,35 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 const TTL: Duration = Duration::from_secs(1);
 
-/// Virtual directory names at the FUSE root.
+/// Fixed virtual directory names at the FUSE root. `$Orphans/` is appended
+/// dynamically by [`root_dir_listing`] only when recovered orphan entries
+/// exist; the old flat `deleted/` directory is gone (recovered deletes now
+/// render in-place — ADR 0008 v2).
 const VIRTUAL_DIRS: &[(u64, &str)] = &[
     (FUSE_RO_INO, "ro"),
     (FUSE_RW_INO, "rw"),
-    (FUSE_DELETED_INO, "deleted"),
     (FUSE_JOURNAL_INO, "journal"),
     (FUSE_METADATA_INO, "metadata"),
     (FUSE_UNALLOCATED_INO, "unallocated"),
     (FUSE_SESSION_INO, "session"),
 ];
 
-/// FUSE inode for the synthetic `$Orphans` directory under `deleted/` (an
-/// otherwise-unused id in the metadata namespace).
-const ORPHANS_META_ID: u64 = 200;
+/// Root-level directory listing: the fixed [`VIRTUAL_DIRS`] plus the top-level
+/// synthetic `$Orphans/` when unplaceable recovered entries exist (ADR 0008
+/// v2). Pure, so the root readdir/lookup shells share one decision.
+fn root_dir_listing(has_orphans: bool) -> Vec<(u64, &'static str)> {
+    let mut v: Vec<(u64, &'static str)> = VIRTUAL_DIRS.to_vec();
+    if has_orphans {
+        v.push((FUSE_ORPHANS_INO, "$Orphans"));
+    }
+    v
+}
+
+/// Whether any recovered entry is routed to `$Orphans` (true orphan, live-name
+/// collision, or an older same-name delete).
+fn cache_has_orphans(entries: &[DeletedEntry]) -> bool {
+    entries.iter().any(|e| e.orphan)
+}
 
 /// Recovered MACB times carried with a deleted entry (timeline + export).
 #[derive(Default, Clone, Copy)]
@@ -428,6 +443,16 @@ impl ForensicFuseFs {
                 .then_some((deleted_ino(e.fs_ino), e.size))
         })
     }
+
+    /// Whether the recovered-deleted cache holds any `$Orphans` entry, so the
+    /// root shells know to surface the top-level `$Orphans/` directory.
+    fn cache_orphans_present(&self) -> bool {
+        self.ensure_deleted_cache();
+        self.deleted_cache
+            .borrow()
+            .as_ref()
+            .is_some_and(|e| cache_has_orphans(e))
+    }
 }
 
 /// Convert a `FsTimestamp` to `SystemTime`.
@@ -536,11 +561,12 @@ fn root_children(
     layout: crate::MountLayout,
     fs: &mut dyn ForensicFs,
     root_ino: u64,
+    has_orphans: bool,
 ) -> crate::FsResult<Vec<(u64, Vec<u8>, FileType)>> {
     match layout {
-        crate::MountLayout::DiskOverlay => Ok(VIRTUAL_DIRS
-            .iter()
-            .map(|&(ino, name)| (ino, name.as_bytes().to_vec(), FileType::Directory))
+        crate::MountLayout::DiskOverlay => Ok(root_dir_listing(has_orphans)
+            .into_iter()
+            .map(|(ino, name)| (ino, name.as_bytes().to_vec(), FileType::Directory))
             .collect()),
         crate::MountLayout::Raw => {
             let mut out = Vec::new();
@@ -705,10 +731,13 @@ fn civil_from_days(z: i64) -> (i64, u32, u32) {
 /// path and every deleted version of it appears. `placement` marks in-place vs
 /// `$Orphans`; `status` says whether the content was recoverable.
 fn deleted_timeline_row(e: &DeletedEntry) -> String {
+    // v2 rendering: orphans live under the top-level `$Orphans/`; in-place
+    // entries render at their real name in the main tree (full parent path is
+    // not reconstructed here — the record id + parent_ino carry identity).
     let path = if e.orphan {
-        format!("deleted/$Orphans/{}", e.name)
+        format!("$Orphans/{}", e.name)
     } else {
-        format!("deleted/{}", e.name)
+        e.real_name.clone()
     };
     let allocation = match e.allocation {
         FsAllocation::Deleted => "deleted",
@@ -754,7 +783,7 @@ impl Filesystem for ForensicFuseFs {
         // Virtual root (disk overlay): resolve virtual directory names. In Raw
         // layout the root maps straight to the ForensicFs root (handled below).
         if parent == FUSE_ROOT_INO && self.layout == crate::MountLayout::DiskOverlay {
-            for &(ino, dir_name) in VIRTUAL_DIRS {
+            for (ino, dir_name) in root_dir_listing(self.cache_orphans_present()) {
                 if name_bytes == dir_name.as_bytes() {
                     let attr = if ino == FUSE_RW_INO && self.has_session() {
                         let mut a = virtual_dir_attr(ino);
@@ -771,32 +800,9 @@ impl Filesystem for ForensicFuseFs {
             return;
         }
 
-        // deleted/ namespace lookup: in-place entries at the real name, plus a
-        // `$Orphans` subdirectory for the unplaceable ones.
-        if parent == FUSE_DELETED_INO {
-            self.ensure_deleted_cache();
-            let cache = self.deleted_cache.borrow();
-            if let Some(entries) = cache.as_ref() {
-                if name_bytes == b"$Orphans" && entries.iter().any(|e| e.orphan) {
-                    let attr = virtual_dir_attr(metadata_ino(ORPHANS_META_ID));
-                    reply.entry(&TTL, &attr, 0);
-                    return;
-                }
-                for entry in entries.iter().filter(|e| !e.orphan) {
-                    if name_bytes == entry.name.as_bytes() {
-                        let fuse_ino = deleted_ino(entry.fs_ino);
-                        let attr = virtual_file_attr(fuse_ino, entry.size);
-                        reply.entry(&TTL, &attr, 0);
-                        return;
-                    }
-                }
-            }
-            reply.error(libc::ENOENT);
-            return;
-        }
-
-        // deleted/$Orphans/ namespace lookup.
-        if parent == metadata_ino(ORPHANS_META_ID) {
+        // $Orphans/ namespace lookup (top-level, ADR 0008 v2): the unplaceable
+        // recovered entries, disambiguated by mtime + record id.
+        if parent == FUSE_ORPHANS_INO {
             self.ensure_deleted_cache();
             let cache = self.deleted_cache.borrow();
             if let Some(entries) = cache.as_ref() {
@@ -1019,8 +1025,8 @@ impl Filesystem for ForensicFuseFs {
             return;
         }
 
-        // Virtual top-level directories.
-        if (FUSE_RO_INO..=FUSE_SESSION_INO).contains(&ino) {
+        // Virtual top-level directories (incl. the top-level `$Orphans/`).
+        if (FUSE_RO_INO..=FUSE_SESSION_INO).contains(&ino) || ino == FUSE_ORPHANS_INO {
             let mut attr = virtual_dir_attr(ino);
             if ino == FUSE_RW_INO && self.has_session() {
                 attr.perm = 0o755;
@@ -1074,10 +1080,6 @@ impl Filesystem for ForensicFuseFs {
                             } else {
                                 reply.error(libc::ENOENT);
                             }
-                        }
-                        ORPHANS_META_ID => {
-                            // deleted/$Orphans directory.
-                            reply.attr(&TTL, &virtual_dir_attr(ino));
                         }
                         _ => reply.error(libc::ENOENT),
                     }
@@ -1181,13 +1183,16 @@ impl Filesystem for ForensicFuseFs {
         // Root directory: virtual dirs (DiskOverlay) or the ForensicFs tree
         // directly (Raw) — both via the tested root_children() decision.
         if ino == FUSE_ROOT_INO {
+            let has_orphans = self.cache_orphans_present();
             let mut entries: Vec<(u64, FileType, String)> = vec![
                 (FUSE_ROOT_INO, FileType::Directory, ".".to_string()),
                 (FUSE_ROOT_INO, FileType::Directory, "..".to_string()),
             ];
             {
                 let mut fs = self.fs.borrow_mut();
-                let Ok(children) = root_children(self.layout, &mut **fs, self.root_ino) else {
+                let Ok(children) =
+                    root_children(self.layout, &mut **fs, self.root_ino, has_orphans)
+                else {
                     reply.error(libc::EIO);
                     return;
                 };
@@ -1306,52 +1311,15 @@ impl Filesystem for ForensicFuseFs {
             return;
         }
 
-        // deleted/ readdir: in-place recovered entries at their real name, plus
-        // a `$Orphans` subdirectory when any unplaceable entries exist.
-        if ino == FUSE_DELETED_INO {
+        // $Orphans/ readdir (top-level, ADR 0008 v2): the unplaceable recovered
+        // entries (true orphans, live-name collisions, older same-name
+        // deletes), disambiguated by mtime + record id.
+        if ino == FUSE_ORPHANS_INO {
             self.ensure_deleted_cache();
             let cache = self.deleted_cache.borrow();
             let mut entries: Vec<(u64, FileType, String)> = vec![
-                (FUSE_DELETED_INO, FileType::Directory, ".".to_string()),
+                (FUSE_ORPHANS_INO, FileType::Directory, ".".to_string()),
                 (FUSE_ROOT_INO, FileType::Directory, "..".to_string()),
-            ];
-            if let Some(cached) = cache.as_ref() {
-                for entry in cached.iter().filter(|e| !e.orphan) {
-                    entries.push((
-                        deleted_ino(entry.fs_ino),
-                        FileType::RegularFile,
-                        entry.name.clone(),
-                    ));
-                }
-                if cached.iter().any(|e| e.orphan) {
-                    entries.push((
-                        metadata_ino(ORPHANS_META_ID),
-                        FileType::Directory,
-                        "$Orphans".to_string(),
-                    ));
-                }
-            }
-            for (i, (entry_ino, kind, name)) in entries.iter().enumerate().skip(offset) {
-                if reply.add(*entry_ino, (i + 1) as i64, *kind, name) {
-                    break;
-                }
-            }
-            reply.ok();
-            return;
-        }
-
-        // deleted/$Orphans/ readdir: the unplaceable entries (true orphans,
-        // name collisions, older same-name deletes), disambiguated.
-        if ino == metadata_ino(ORPHANS_META_ID) {
-            self.ensure_deleted_cache();
-            let cache = self.deleted_cache.borrow();
-            let mut entries: Vec<(u64, FileType, String)> = vec![
-                (
-                    metadata_ino(ORPHANS_META_ID),
-                    FileType::Directory,
-                    ".".to_string(),
-                ),
-                (FUSE_DELETED_INO, FileType::Directory, "..".to_string()),
             ];
             if let Some(cached) = cache.as_ref() {
                 for entry in cached.iter().filter(|e| e.orphan) {
@@ -2184,7 +2152,7 @@ mod tests {
 
     #[test]
     fn virtual_dir_attr_preserves_ino() {
-        for ino in [1, 42, FUSE_ROOT_INO, FUSE_DELETED_INO, 999_999] {
+        for ino in [1, 42, FUSE_ROOT_INO, FUSE_ORPHANS_INO, 999_999] {
             assert_eq!(virtual_dir_attr(ino).ino, ino);
         }
     }
@@ -2508,7 +2476,7 @@ mod tests {
     fn root_child_names(layout: crate::MountLayout) -> Vec<String> {
         let mut fs = MockForensicFs;
         let root = fs.root_ino();
-        root_children(layout, &mut fs, root)
+        root_children(layout, &mut fs, root, false)
             .unwrap()
             .iter()
             .map(|(_, n, _)| String::from_utf8_lossy(n).to_string())
@@ -2531,17 +2499,23 @@ mod tests {
     #[test]
     fn root_children_diskoverlay_lists_virtual_dirs() {
         let names = root_child_names(crate::MountLayout::DiskOverlay);
-        for d in [
-            "ro",
-            "rw",
-            "deleted",
-            "journal",
-            "metadata",
-            "unallocated",
-            "session",
-        ] {
+        for d in ["ro", "rw", "journal", "metadata", "unallocated", "session"] {
             assert!(names.contains(&d.to_string()), "missing {d}: {names:?}");
         }
+        // The flat deleted/ directory is gone in v2 (in-place rendering).
+        assert!(!names.contains(&"deleted".to_string()), "got {names:?}");
+    }
+
+    #[test]
+    fn root_children_diskoverlay_appends_orphans_when_present() {
+        let mut fs = MockForensicFs;
+        let root = fs.root_ino();
+        let with: Vec<String> = root_children(crate::MountLayout::DiskOverlay, &mut fs, root, true)
+            .unwrap()
+            .iter()
+            .map(|(_, n, _)| String::from_utf8_lossy(n).to_string())
+            .collect();
+        assert!(with.contains(&"$Orphans".to_string()), "got {with:?}");
     }
 
     // -----------------------------------------------------------------------
@@ -2550,10 +2524,11 @@ mod tests {
 
     #[test]
     fn virtual_dirs_has_expected_entries() {
-        assert_eq!(VIRTUAL_DIRS.len(), 7);
+        // v2: the flat deleted/ dir is gone; six fixed virtual dirs remain.
+        assert_eq!(VIRTUAL_DIRS.len(), 6);
         assert!(VIRTUAL_DIRS.iter().any(|(_, name)| *name == "ro"));
         assert!(VIRTUAL_DIRS.iter().any(|(_, name)| *name == "rw"));
-        assert!(VIRTUAL_DIRS.iter().any(|(_, name)| *name == "deleted"));
+        assert!(!VIRTUAL_DIRS.iter().any(|(_, name)| *name == "deleted"));
         assert!(VIRTUAL_DIRS.iter().any(|(_, name)| *name == "journal"));
         assert!(VIRTUAL_DIRS.iter().any(|(_, name)| *name == "metadata"));
         assert!(VIRTUAL_DIRS.iter().any(|(_, name)| *name == "unallocated"));
@@ -2566,7 +2541,6 @@ mod tests {
             match name {
                 "ro" => assert_eq!(ino, FUSE_RO_INO),
                 "rw" => assert_eq!(ino, FUSE_RW_INO),
-                "deleted" => assert_eq!(ino, FUSE_DELETED_INO),
                 "journal" => assert_eq!(ino, FUSE_JOURNAL_INO),
                 "metadata" => assert_eq!(ino, FUSE_METADATA_INO),
                 "unallocated" => assert_eq!(ino, FUSE_UNALLOCATED_INO),

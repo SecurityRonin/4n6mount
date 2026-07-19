@@ -10,6 +10,10 @@ pub const FUSE_METADATA_INO: u64 = 6;
 pub const FUSE_UNALLOCATED_INO: u64 = 7;
 pub const FUSE_SESSION_INO: u64 = 8;
 pub const FUSE_EVIDENCE_INO: u64 = 9;
+/// Top-level synthetic `$Orphans/` directory (ADR 0008 v2). Holds the
+/// unplaceable recovered-deleted entries (true orphans, live-name collisions,
+/// older same-name deletes). Replaces the old `deleted/$Orphans/` subtree.
+pub const FUSE_ORPHANS_INO: u64 = 10;
 
 /// Offset added to real ext4 inodes when exposing them under ro/.
 const RO_INODE_OFFSET: u64 = 1_000;
@@ -49,7 +53,7 @@ pub enum InodeNamespace {
 
 /// Convert a FUSE inode number to its namespace and real inode.
 pub fn decode_fuse_ino(ino: u64) -> InodeNamespace {
-    if ino <= FUSE_EVIDENCE_INO {
+    if ino <= FUSE_ORPHANS_INO {
         InodeNamespace::Virtual(ino)
     } else if ino >= UNALLOCATED_INODE_OFFSET {
         InodeNamespace::Unallocated(ino - UNALLOCATED_INODE_OFFSET)
