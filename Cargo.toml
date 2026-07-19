@@ -62,6 +62,9 @@ libc = "0.2"
 [dev-dependencies]
 # The peel_open integration test gzips a fixture to prove the archive-layer peel.
 flate2 = "1"
+# The e2e_archive_read test drives the SAME archive reader the mount peels
+# evidence with (`archive_core::Archive`) against a real catalog .zip.
+archive-core = { version = "0.1.0", path = "../archive-forensic/core" }
 
 [target.'cfg(unix)'.dependencies]
 fuser = "0.15"
