@@ -47,8 +47,10 @@ forensic-vfs = "0.4"
 # with the engine's copy (see the [patch] bridge below while Phase 1 is unpublished).
 forensic-vfs-resolver = { version = "0.1", optional = true }
 # Archive-layer reader: transparently peels a gzip/bzip2/xz compression wrapper
-# (evidence.dd.gz -> dd) before the engine opens the inner image.
-archive-core = { version = "0.1.0", path = "../archive-forensic/core" }
+# (evidence.dd.gz -> dd) before the engine opens the inner image. The `vfs`
+# feature exposes `ArchiveOpener` (the forensic-vfs ArchiveOpen impl) so the
+# memory path can build an archive-only `Openers` for resolve_to_source.
+archive-core = { version = "0.1.0", path = "../archive-forensic/core", features = ["vfs"] }
 tempfile = "3"
 memf-format = { version = "0.2", path = "../memory-forensic/crates/memf-format", optional = true }
 memf-core = { version = "0.2", path = "../memory-forensic/crates/memf-core", optional = true }
