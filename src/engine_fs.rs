@@ -27,8 +27,9 @@ use forensic_vfs::{
 use forensic_vfs_engine::Vfs;
 
 use crate::{
-    not_supported, ForensicFs, FsBlockRange, FsDeletedInode, FsDirEntry, FsError, FsFileType,
-    FsMetadata, FsRecoveryResult, FsResult, FsTimelineEvent, FsTimestamp, FsTransaction,
+    not_supported, ForensicFs, FsAllocation, FsBlockRange, FsDeletedInode, FsDeletedNode,
+    FsDirEntry, FsError, FsFileType, FsMetadata, FsRecoveryResult, FsResult, FsTimelineEvent,
+    FsTimestamp, FsTransaction,
 };
 
 /// Cap on deleted/unallocated enumeration — a bomb guard against a hostile
@@ -231,6 +232,42 @@ impl ForensicFs for EngineFs {
                 size: meta.size,
                 dtime: 0,
                 recoverability: 0.0,
+            });
+        }
+        Ok(out)
+    }
+
+    fn deleted_nodes(&mut self) -> FsResult<Vec<FsDeletedNode>> {
+        // The engine's rich deleted surface: each node carries a readable
+        // `FileId` (→ a dense FUSE inode here, usable with `read_file`), the
+        // recovered name, and the parent `FileId` (→ inode), so the mount can
+        // place it in-place or route it to `$Orphans`. Bomb-guarded by
+        // `ENUM_CAP`. The stream is owned, so allocating inodes as we go is safe.
+        let stream = self.fs.deleted_nodes().map_err(vfs_err)?;
+        let mut out = Vec::new();
+        for node in stream.take(ENUM_CAP) {
+            let node = node.map_err(vfs_err)?;
+            let ino = self.assign(node.id);
+            let parent_ino = node.parent.map(|p| self.assign(p));
+            let meta = &node.meta;
+            let allocation = match meta.allocated {
+                Allocation::Orphan => FsAllocation::Orphan,
+                // `Deleted` and any future/`Allocated` variant render as a
+                // deleted record (a recovered node is unlinked by definition).
+                _ => FsAllocation::Deleted,
+            };
+            out.push(FsDeletedNode {
+                ino,
+                name: node.name.clone(),
+                parent_ino,
+                size: meta.size,
+                file_type: node_kind(meta.kind),
+                allocation,
+                record_id: meta.ino,
+                atime: ts(meta.times.accessed),
+                mtime: ts(meta.times.modified),
+                ctime: ts(meta.times.changed),
+                crtime: ts(meta.times.born),
             });
         }
         Ok(out)

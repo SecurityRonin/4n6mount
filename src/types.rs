@@ -73,6 +73,41 @@ pub struct FsDeletedInode {
     pub recoverability: f64,
 }
 
+/// Name/metadata-layer allocation status of a recovered node. `Allocated`
+/// never appears here (a recovered node is unlinked by definition).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum FsAllocation {
+    /// The record is unlinked but its parent is still known.
+    Deleted,
+    /// The parent link is gone — a true orphan.
+    Orphan,
+}
+
+/// A recovered deleted (or orphaned) node carrying the identity a consumer
+/// needs to render *and* read it: a readable inode, the recovered name, the
+/// parent inode (or `None` for an orphan), the metadata record id, and MACB
+/// times. Unlike [`FsDeletedInode`] (bare inode + size), this is the rich
+/// surface backing in-place vs `$Orphans` placement — the name is **never
+/// fabricated** (empty when the filesystem destroyed it on delete).
+#[derive(Debug, Clone)]
+pub struct FsDeletedNode {
+    /// Readable inode — usable with `read_file` / `read_file_range`.
+    pub ino: u64,
+    /// Recovered name; may be empty/partial, never fabricated.
+    pub name: Vec<u8>,
+    /// Parent directory inode, or `None` for an orphan.
+    pub parent_ino: Option<u64>,
+    pub size: u64,
+    pub file_type: FsFileType,
+    pub allocation: FsAllocation,
+    /// Metadata address (MFT entry / inode number) — the stable disambiguator.
+    pub record_id: u64,
+    pub atime: FsTimestamp,
+    pub mtime: FsTimestamp,
+    pub ctime: FsTimestamp,
+    pub crtime: FsTimestamp,
+}
+
 /// Result of attempting to recover a deleted file.
 #[derive(Debug, Clone)]
 pub struct FsRecoveryResult {

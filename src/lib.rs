@@ -68,6 +68,16 @@ pub trait ForensicFs {
         Ok(vec![])
     }
 
+    /// List deleted/orphan nodes with recovered identity — a readable inode,
+    /// the recovered name, parent inode, record id, and MACB times — so the
+    /// mount can render each in place (or route it to `$Orphans`) and read its
+    /// bytes via [`read_file`](Self::read_file). Default empty: a backend opts
+    /// in once it can recover the rich identity (e.g. NTFS `$FILE_NAME` + the
+    /// MFT reference). It never fabricates an entry.
+    fn deleted_nodes(&mut self) -> FsResult<Vec<FsDeletedNode>> {
+        Ok(vec![])
+    }
+
     /// Attempt to recover a deleted file by inode number.
     fn recover_file(&mut self, _ino: u64) -> FsResult<FsRecoveryResult> {
         Err(not_supported("recover_file"))

@@ -7,7 +7,9 @@ use crate::inode_map::{
 };
 use crate::session::Session;
 use crate::ForensicFs;
-use crate::{FsBlockRange, FsEventType, FsFileType, FsMetadata, FsTimestamp};
+use crate::{
+    DeletedMode, FsAllocation, FsBlockRange, FsEventType, FsFileType, FsMetadata, FsTimestamp,
+};
 use fuser::{
     FileAttr, FileType, Filesystem, ReplyAttr, ReplyCreate, ReplyData, ReplyDirectory, ReplyEmpty,
     ReplyEntry, ReplyWrite, Request, TimeOrNow,
@@ -29,12 +31,44 @@ const VIRTUAL_DIRS: &[(u64, &str)] = &[
     (FUSE_SESSION_INO, "session"),
 ];
 
-/// Cached entry for a deleted file visible in the `deleted/` virtual directory.
+/// FUSE inode for the synthetic `$Orphans` directory under `deleted/` (an
+/// otherwise-unused id in the metadata namespace).
+const ORPHANS_META_ID: u64 = 200;
+
+/// Recovered MACB times carried with a deleted entry (timeline + export).
+#[derive(Default, Clone, Copy)]
+struct DeletedMacb {
+    modified: FsTimestamp,
+    accessed: FsTimestamp,
+    changed: FsTimestamp,
+    born: FsTimestamp,
+}
+
+/// Cached entry for a recovered deleted file visible under `deleted/`.
+///
+/// The name is the **real** recovered name when placed in-place, or the
+/// disambiguated `<name>@<ts>Z~<id>` form under `$Orphans` — never the old
+/// fabricated `<ino>_unknown`. `readable == false` marks content the backend
+/// could not recover, surfaced as an explicit read error rather than a
+/// fabricated 0-byte success.
 struct DeletedEntry {
+    /// Readable backend inode (reads the recovered bytes).
     fs_ino: u64,
+    /// Display name (real, or disambiguated under `$Orphans`).
     name: String,
+    /// The recovered real name (empty when the FS destroyed it on delete).
+    real_name: String,
     size: u64,
     data: Vec<u8>,
+    readable: bool,
+    /// True when routed to `$Orphans`; false when placed in-place.
+    orphan: bool,
+    /// Recovered parent inode (None for a true orphan).
+    parent_ino: Option<u64>,
+    /// Metadata record id (MFT entry / inode) — the stable disambiguator.
+    record_id: u64,
+    allocation: FsAllocation,
+    macb: DeletedMacb,
 }
 
 /// Cached entry for a journal transaction visible in the `journal/` virtual directory.
@@ -75,6 +109,8 @@ pub struct ForensicFuseFs {
     unallocated_cache: RefCell<Option<Vec<UnallocatedEntry>>>,
     /// How the root is rendered: disk overlay (`ro/ rw/ …`) or raw tree.
     layout: crate::MountLayout,
+    /// How the `deleted/` view is populated (latest / all / off).
+    deleted_mode: DeletedMode,
 }
 
 impl ForensicFuseFs {
@@ -82,6 +118,7 @@ impl ForensicFuseFs {
         fs: Box<dyn ForensicFs + Send>,
         session: Option<Session>,
         layout: crate::MountLayout,
+        deleted_mode: DeletedMode,
     ) -> Self {
         let root_ino = fs.root_ino();
         Self {
@@ -94,6 +131,7 @@ impl ForensicFuseFs {
             metadata_cache: RefCell::new(None),
             unallocated_cache: RefCell::new(None),
             layout,
+            deleted_mode,
         }
     }
 
@@ -166,26 +204,85 @@ impl ForensicFuseFs {
         }
     }
 
-    /// Ensure the deleted/ cache is populated.
+    /// Ensure the deleted/ cache is populated from the backend's rich
+    /// `deleted_nodes()` — real names, in-place vs `$Orphans` placement, and
+    /// `--deleted` gating. No fabrication: an unreadable node is marked, never
+    /// rendered as a 0-byte success, and names are never `<ino>_unknown`.
     fn ensure_deleted_cache(&self) {
         if self.deleted_cache.borrow().is_some() {
             return;
         }
+        // `off`: a successful, empty enumeration (honest "not requested"), not a
+        // populated cache.
+        if self.deleted_mode == DeletedMode::Off {
+            *self.deleted_cache.borrow_mut() = Some(Vec::new());
+            return;
+        }
+
         let mut fs = self.fs.borrow_mut();
-        let deleted_inodes = fs.deleted_inodes().unwrap_or_default();
-        let mut entries = Vec::new();
-        for di in &deleted_inodes {
-            let name = format!("{}_unknown", di.ino);
-            let result = fs.recover_file(di.ino);
-            let (size, data) = match result {
-                Ok(r) => (r.data.len() as u64, r.data),
-                Err(_) => (0, Vec::new()),
+        let nodes = fs.deleted_nodes().unwrap_or_default();
+
+        // Per node: does a *live* sibling already hold this name under the
+        // recovered parent? A collision forces the entry to `$Orphans`.
+        let plans: Vec<DeletedPlan> = nodes
+            .iter()
+            .map(|n| {
+                let has_live_collision = match n.parent_ino {
+                    Some(p) if !n.name.is_empty() => fs.lookup(p, &n.name).ok().flatten().is_some(),
+                    _ => false,
+                };
+                DeletedPlan {
+                    ino: n.ino,
+                    real_name: String::from_utf8_lossy(&n.name).into_owned(),
+                    parent_ino: n.parent_ino,
+                    mtime_secs: n.mtime.seconds,
+                    record_id: n.record_id,
+                    has_live_collision,
+                    allocation: n.allocation,
+                }
+            })
+            .collect();
+
+        let placed = plan_deleted(&plans, self.deleted_mode);
+
+        let mut entries = Vec::with_capacity(placed.len());
+        for p in placed {
+            let node = nodes.iter().find(|n| n.ino == p.ino);
+            let (meta_size, macb) = node.map_or((0, DeletedMacb::default()), |n| {
+                (
+                    n.size,
+                    DeletedMacb {
+                        modified: n.mtime,
+                        accessed: n.atime,
+                        changed: n.ctime,
+                        born: n.crtime,
+                    },
+                )
+            });
+            // Content: recover the bytes; a failure is MARKED (readable=false),
+            // never fabricated into a 0-byte success. Size falls back to the
+            // recovered metadata size so an unreadable entry still shows a size.
+            let (data, readable) = match fs.read_file(p.ino) {
+                Ok(d) => (d, true),
+                Err(_) => (Vec::new(), false),
+            };
+            let size = if readable {
+                data.len() as u64
+            } else {
+                meta_size
             };
             entries.push(DeletedEntry {
-                fs_ino: di.ino,
-                name,
+                fs_ino: p.ino,
+                name: p.display_name,
+                real_name: p.real_name,
                 size,
                 data,
+                readable,
+                orphan: p.orphan,
+                parent_ino: p.parent_ino,
+                record_id: p.record_id,
+                allocation: p.allocation,
+                macb,
             });
         }
         *self.deleted_cache.borrow_mut() = Some(entries);
@@ -434,6 +531,149 @@ fn root_children(
     }
 }
 
+/// One recovered deleted node as input to the placement planner.
+struct DeletedPlan {
+    ino: u64,
+    real_name: String,
+    parent_ino: Option<u64>,
+    mtime_secs: i64,
+    record_id: u64,
+    has_live_collision: bool,
+    allocation: FsAllocation,
+}
+
+/// Planner output: where a recovered node renders and under what name.
+struct PlacedDeleted {
+    ino: u64,
+    display_name: String,
+    real_name: String,
+    orphan: bool,
+    parent_ino: Option<u64>,
+    record_id: u64,
+    allocation: FsAllocation,
+}
+
+/// Decide in-place vs `$Orphans` placement and the display name for each
+/// recovered deleted node, per ADR 0008 and the `--deleted` mode. Pure and
+/// deterministic (no filesystem access), so it is unit-tested directly:
+///
+/// - `Off`   → nothing.
+/// - `All`   → every instance under `$Orphans`, disambiguated.
+/// - `Latest`→ the newest instance of each (parent, name) group renders
+///   in-place (real name) when its parent is known, its name survived, its
+///   allocation is `Deleted`, and no live sibling holds the name; every other
+///   instance (older duplicates, collisions, true orphans) goes to `$Orphans`.
+fn plan_deleted(plans: &[DeletedPlan], mode: DeletedMode) -> Vec<PlacedDeleted> {
+    match mode {
+        DeletedMode::Off => Vec::new(),
+        DeletedMode::All => plans.iter().map(orphan_placed).collect(),
+        DeletedMode::Latest => {
+            use std::collections::{HashMap, HashSet};
+            // Winner of each (parent, name) group = the in-place candidate.
+            let mut winner: HashMap<(u64, &str), usize> = HashMap::new();
+            for (i, p) in plans.iter().enumerate() {
+                if !eligible_in_place(p) {
+                    continue;
+                }
+                let key = (p.parent_ino.unwrap_or_default(), p.real_name.as_str());
+                match winner.get(&key) {
+                    Some(&j) if !outranks(p, &plans[j]) => {}
+                    _ => {
+                        winner.insert(key, i);
+                    }
+                }
+            }
+            let winners: HashSet<usize> = winner.into_values().collect();
+            plans
+                .iter()
+                .enumerate()
+                .map(|(i, p)| {
+                    if winners.contains(&i) {
+                        PlacedDeleted {
+                            ino: p.ino,
+                            display_name: p.real_name.clone(),
+                            real_name: p.real_name.clone(),
+                            orphan: false,
+                            parent_ino: p.parent_ino,
+                            record_id: p.record_id,
+                            allocation: p.allocation,
+                        }
+                    } else {
+                        orphan_placed(p)
+                    }
+                })
+                .collect()
+        }
+    }
+}
+
+/// A node may render in place only if it is a named, parented, `Deleted`
+/// record whose name is free in the live directory.
+fn eligible_in_place(p: &DeletedPlan) -> bool {
+    p.allocation == FsAllocation::Deleted
+        && p.parent_ino.is_some()
+        && !p.real_name.is_empty()
+        && !p.has_live_collision
+}
+
+/// `a` outranks `b` for the in-place slot: newest mtime, ties to highest id.
+fn outranks(a: &DeletedPlan, b: &DeletedPlan) -> bool {
+    (a.mtime_secs, a.record_id) > (b.mtime_secs, b.record_id)
+}
+
+fn orphan_placed(p: &DeletedPlan) -> PlacedDeleted {
+    PlacedDeleted {
+        ino: p.ino,
+        display_name: orphan_name(&p.real_name, p.mtime_secs, p.record_id),
+        real_name: p.real_name.clone(),
+        orphan: true,
+        parent_ino: p.parent_ino,
+        record_id: p.record_id,
+        allocation: p.allocation,
+    }
+}
+
+/// `$Orphans` disambiguated name `<name>@<ts>Z~<id>` (the `Z` is appended by
+/// [`filename_safe_utc`]), degrading to `record-<id>[@<ts>Z]` when no name
+/// survived. The id is always present — it is the uniqueness guarantee.
+fn orphan_name(real_name: &str, mtime_secs: i64, record_id: u64) -> String {
+    let ts = (mtime_secs > 0).then(|| filename_safe_utc(mtime_secs));
+    match (real_name.is_empty(), ts) {
+        (false, Some(ts)) => format!("{real_name}@{ts}~{record_id}"),
+        (false, None) => format!("{real_name}~{record_id}"),
+        (true, Some(ts)) => format!("record-{record_id}@{ts}"),
+        (true, None) => format!("record-{record_id}"),
+    }
+}
+
+/// Format Unix seconds as a filename-safe UTC string `YYYY-MM-DDTHH-MM-SSZ`.
+/// Colons become hyphens because `:` is illegal in Windows filenames, so this
+/// timestamp can appear in any path the mount emits (ADR 0008).
+#[allow(clippy::many_single_char_names)] // conventional date-field names (y/m/d/h/s)
+fn filename_safe_utc(secs: i64) -> String {
+    let days = secs.div_euclid(86_400);
+    let tod = secs.rem_euclid(86_400);
+    let (h, m, s) = (tod / 3600, (tod % 3600) / 60, tod % 60);
+    let (y, mon, d) = civil_from_days(days);
+    format!("{y:04}-{mon:02}-{d:02}T{h:02}-{m:02}-{s:02}Z")
+}
+
+/// Days since the Unix epoch → (year, month, day). Howard Hinnant's
+/// `civil_from_days` (public domain), valid across the whole i64 range.
+#[allow(clippy::many_single_char_names)] // canonical algorithm's variable names
+fn civil_from_days(z: i64) -> (i64, u32, u32) {
+    let z = z + 719_468;
+    let era = if z >= 0 { z } else { z - 146_096 } / 146_097;
+    let doe = (z - era * 146_097) as u64; // [0, 146096]
+    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365; // [0, 399]
+    let y = yoe as i64 + era * 400;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100); // [0, 365]
+    let mp = (5 * doy + 2) / 153; // [0, 11]
+    let d = (doy - (153 * mp + 2) / 5 + 1) as u32; // [1, 31]
+    let m = if mp < 10 { mp + 3 } else { mp - 9 } as u32; // [1, 12]
+    (if m <= 2 { y + 1 } else { y }, m, d)
+}
+
 impl Filesystem for ForensicFuseFs {
     fn lookup(&mut self, _req: &Request, parent: u64, name: &OsStr, reply: ReplyEntry) {
         let name_bytes = name.as_encoded_bytes();
@@ -458,16 +698,39 @@ impl Filesystem for ForensicFuseFs {
             return;
         }
 
-        // deleted/ namespace lookup.
+        // deleted/ namespace lookup: in-place entries at the real name, plus a
+        // `$Orphans` subdirectory for the unplaceable ones.
         if parent == FUSE_DELETED_INO {
             self.ensure_deleted_cache();
             let cache = self.deleted_cache.borrow();
             if let Some(entries) = cache.as_ref() {
-                for entry in entries {
+                if name_bytes == b"$Orphans" && entries.iter().any(|e| e.orphan) {
+                    let attr = virtual_dir_attr(metadata_ino(ORPHANS_META_ID));
+                    reply.entry(&TTL, &attr, 0);
+                    return;
+                }
+                for entry in entries.iter().filter(|e| !e.orphan) {
                     if name_bytes == entry.name.as_bytes() {
                         let fuse_ino = deleted_ino(entry.fs_ino);
                         let attr = virtual_file_attr(fuse_ino, entry.size);
                         reply.entry(&TTL, &attr, 0);
+                        return;
+                    }
+                }
+            }
+            reply.error(libc::ENOENT);
+            return;
+        }
+
+        // deleted/$Orphans/ namespace lookup.
+        if parent == metadata_ino(ORPHANS_META_ID) {
+            self.ensure_deleted_cache();
+            let cache = self.deleted_cache.borrow();
+            if let Some(entries) = cache.as_ref() {
+                for entry in entries.iter().filter(|e| e.orphan) {
+                    if name_bytes == entry.name.as_bytes() {
+                        let fuse_ino = deleted_ino(entry.fs_ino);
+                        reply.entry(&TTL, &virtual_file_attr(fuse_ino, entry.size), 0);
                         return;
                     }
                 }
@@ -722,6 +985,10 @@ impl Filesystem for ForensicFuseFs {
                                 reply.error(libc::ENOENT);
                             }
                         }
+                        ORPHANS_META_ID => {
+                            // deleted/$Orphans directory.
+                            reply.attr(&TTL, &virtual_dir_attr(ino));
+                        }
                         _ => reply.error(libc::ENOENT),
                     }
                 } else {
@@ -933,7 +1200,8 @@ impl Filesystem for ForensicFuseFs {
             return;
         }
 
-        // deleted/ readdir
+        // deleted/ readdir: in-place recovered entries at their real name, plus
+        // a `$Orphans` subdirectory when any unplaceable entries exist.
         if ino == FUSE_DELETED_INO {
             self.ensure_deleted_cache();
             let cache = self.deleted_cache.borrow();
@@ -942,7 +1210,45 @@ impl Filesystem for ForensicFuseFs {
                 (FUSE_ROOT_INO, FileType::Directory, "..".to_string()),
             ];
             if let Some(cached) = cache.as_ref() {
-                for entry in cached {
+                for entry in cached.iter().filter(|e| !e.orphan) {
+                    entries.push((
+                        deleted_ino(entry.fs_ino),
+                        FileType::RegularFile,
+                        entry.name.clone(),
+                    ));
+                }
+                if cached.iter().any(|e| e.orphan) {
+                    entries.push((
+                        metadata_ino(ORPHANS_META_ID),
+                        FileType::Directory,
+                        "$Orphans".to_string(),
+                    ));
+                }
+            }
+            for (i, (entry_ino, kind, name)) in entries.iter().enumerate().skip(offset) {
+                if reply.add(*entry_ino, (i + 1) as i64, *kind, name) {
+                    break;
+                }
+            }
+            reply.ok();
+            return;
+        }
+
+        // deleted/$Orphans/ readdir: the unplaceable entries (true orphans,
+        // name collisions, older same-name deletes), disambiguated.
+        if ino == metadata_ino(ORPHANS_META_ID) {
+            self.ensure_deleted_cache();
+            let cache = self.deleted_cache.borrow();
+            let mut entries: Vec<(u64, FileType, String)> = vec![
+                (
+                    metadata_ino(ORPHANS_META_ID),
+                    FileType::Directory,
+                    ".".to_string(),
+                ),
+                (FUSE_DELETED_INO, FileType::Directory, "..".to_string()),
+            ];
+            if let Some(cached) = cache.as_ref() {
+                for entry in cached.iter().filter(|e| e.orphan) {
                     entries.push((
                         deleted_ino(entry.fs_ino),
                         FileType::RegularFile,
@@ -1137,6 +1443,12 @@ impl Filesystem for ForensicFuseFs {
                 let cache = self.deleted_cache.borrow();
                 if let Some(entries) = cache.as_ref() {
                     if let Some(entry) = entries.iter().find(|e| e.fs_ino == fs_ino) {
+                        // Unreadable recovered content is a loud read error, not
+                        // a fabricated 0-byte success.
+                        if !entry.readable {
+                            reply.error(libc::EIO);
+                            return;
+                        }
                         let off = offset as usize;
                         if off >= entry.data.len() {
                             reply.data(&[]);
@@ -2252,7 +2564,7 @@ mod tests {
                 10 => Ok(b"Hello, mock!".to_vec()),
                 12 => Ok(b"Nested file".to_vec()),
                 // Deleted nodes whose content is recoverable.
-                100 | 101 | 102 | 103 => Ok(vec![0xAB; 100]),
+                100..=103 => Ok(vec![0xAB; 100]),
                 // 104 (gone.txt) deliberately unreadable — falls through to Err.
                 _ => Err(FsError::NotFound(format!("inode {ino}"))),
             }
@@ -2387,6 +2699,7 @@ mod tests {
             Box::new(MockForensicFs),
             None,
             crate::MountLayout::DiskOverlay,
+            crate::DeletedMode::Latest,
         )
     }
 
@@ -2397,10 +2710,11 @@ mod tests {
         fuse.ensure_deleted_cache();
         let cache = fuse.deleted_cache.borrow();
         let entries = cache.as_ref().expect("cache should be populated");
-        assert_eq!(entries.len(), 1);
-        assert_eq!(entries[0].fs_ino, 99);
-        assert_eq!(entries[0].name, "99_unknown");
-        assert_eq!(entries[0].data.len(), 100);
+        // Five recovered nodes from the mock, real names — never fabricated.
+        assert_eq!(entries.len(), 5);
+        assert!(entries
+            .iter()
+            .any(|e| e.fs_ino == 100 && e.name == "report.txt"));
     }
 
     #[test]
