@@ -39,7 +39,7 @@ forensic-vfs-engine = { version = "0.1", path = "../forensic-vfs-engine" }
 # The `FileSystem` navigation contract + its `Fs*` value types. Registry version
 # (not a path dep) so it unifies with the copy the engine links — a path dep
 # would compile a second, incompatible `DynFs`/`FileId`.
-forensic-vfs = "0.3"
+forensic-vfs = "0.4"
 # Archive-layer reader: transparently peels a gzip/bzip2/xz compression wrapper
 # (evidence.dd.gz -> dd) before the engine opens the inner image.
 archive-core = { version = "0.1.0", path = "../archive-forensic/core" }
