@@ -68,6 +68,16 @@ pub trait ForensicFs {
         Ok(vec![])
     }
 
+    /// List deleted/orphan nodes with recovered identity — a readable inode,
+    /// the recovered name, parent inode, record id, and MACB times — so the
+    /// mount can render each in place (or route it to `$Orphans`) and read its
+    /// bytes via [`read_file`](Self::read_file). Default empty: a backend opts
+    /// in once it can recover the rich identity (e.g. NTFS `$FILE_NAME` + the
+    /// MFT reference). It never fabricates an entry.
+    fn deleted_nodes(&mut self) -> FsResult<Vec<FsDeletedNode>> {
+        Ok(vec![])
+    }
+
     /// Attempt to recover a deleted file by inode number.
     fn recover_file(&mut self, _ino: u64) -> FsResult<FsRecoveryResult> {
         Err(not_supported("recover_file"))
@@ -120,6 +130,24 @@ pub enum MountLayout {
     Raw,
 }
 
+/// How the `deleted/` view surfaces recovered deleted files.
+///
+/// A deleted file is placed **in-place** (under its recovered parent, at its
+/// real name) when its parent is known and no live sibling holds the name;
+/// otherwise it is routed to a synthetic `$Orphans` bucket (ADR 0008).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, clap::ValueEnum)]
+pub enum DeletedMode {
+    /// Newest deleted instance per (parent, name) rendered in-place; older
+    /// same-name instances routed to `$Orphans`. The default.
+    #[default]
+    Latest,
+    /// Every deleted instance rendered under `$Orphans`, disambiguated by
+    /// recovered mtime and record id.
+    All,
+    /// Do not surface deleted files at all.
+    Off,
+}
+
 /// Mount options for the FUSE filesystem.
 ///
 /// Platform-agnostic configuration consumed by both the Unix (fuser)
@@ -129,6 +157,8 @@ pub struct MountOptions {
     pub daemon: bool,
     pub fs_name: String,
     pub layout: MountLayout,
+    /// How the `deleted/` view is populated.
+    pub deleted_mode: DeletedMode,
 }
 
 impl Default for MountOptions {
@@ -138,6 +168,7 @@ impl Default for MountOptions {
             daemon: false,
             fs_name: "4n6mount".to_string(),
             layout: MountLayout::DiskOverlay,
+            deleted_mode: DeletedMode::default(),
         }
     }
 }
