@@ -203,6 +203,24 @@ On Windows the filesystem tree is presented read-only at the mount point (no
 bindings are MIT-licensed and the Dokany runtime is LGPL/MIT, so no copyleft
 code is linked into the binary.
 
+### Recovered-deleted marking (ADR-0008)
+
+A metadata-recovered deleted or orphan file is marked out-of-band, at its real
+name, through one logical schema rendered on each platform's native channel:
+
+- **Unix** (macFUSE / Linux): extended attributes `user.4n6.status`
+  (`deleted` / `orphan`) and `user.4n6.macb.{modified,accessed,changed,born}`
+  (ISO-8601 UTC). Read them with `getfattr -n user.4n6.status <file>`.
+- **Windows** (Dokan): NTFS Alternate Data Streams `<name>:4n6.status` and
+  `<name>:4n6.macb`, enumerated by `find_streams`. Read them with
+  `Get-Item -Stream 4n6.status <file>` or `Get-Content <file>:4n6.status`.
+
+Both render from one cross-platform schema module, so the bytes are identical
+between the channels; the schema values are unit-tested on every platform. The
+Windows ADS channel is implemented; because Dokan is Windows-only it is verified
+on a Windows runner (the Dokan mount-smoke matrix), not by the macOS/Linux
+`cargo test`.
+
 ## Install
 
 ```bash

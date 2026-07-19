@@ -5,6 +5,10 @@ pub mod filter;
 #[cfg(unix)]
 pub mod fusefs;
 pub mod inode_map;
+// The recovered-deleted marking schema (ADR-0008 v2): the single, platform-
+// agnostic source of truth for the values the Unix xattr channel and the
+// Windows NTFS-ADS channel both render.
+pub mod marking;
 pub mod session;
 pub mod win_map;
 

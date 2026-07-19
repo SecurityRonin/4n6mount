@@ -50,6 +50,36 @@ pub fn path_components(path: &str) -> Vec<&str> {
     path.split(['\\', '/']).filter(|c| !c.is_empty()).collect()
 }
 
+/// Split a Dokan path into its file part and an optional NTFS Alternate Data
+/// Stream name, so a `create_file` on `\dir\file:4n6.status` resolves `\dir\file`
+/// and remembers the `4n6.status` stream.
+///
+/// An ADS suffix (`:name`) is only ever on the **final** path component, and `:`
+/// is illegal in a normal Windows filename, so the split is unambiguous. The
+/// `:$DATA` stream-type suffix is stripped, and the unnamed main stream — no
+/// suffix, or the explicit `::$DATA` — yields `None`.
+pub fn split_path_stream(path: &str) -> (&str, Option<&str>) {
+    // The ADS suffix lives only on the final component; locate it, then split
+    // that tail on its first `:`.
+    let comp_start = path.rfind(['\\', '/']).map_or(0, |i| i + 1);
+    let (head, last) = path.split_at(comp_start);
+    let Some(colon) = last.find(':') else {
+        return (path, None);
+    };
+    // `file` is everything up to the stream delimiter; the stream is the rest,
+    // minus a trailing `:$DATA` type suffix.
+    let file_len = head.len() + colon;
+    let stream = &last[colon + 1..];
+    let stream = stream.strip_suffix(":$DATA").unwrap_or(stream);
+    let stream = stream.strip_suffix("$DATA").unwrap_or(stream);
+    let stream = if stream.is_empty() {
+        None
+    } else {
+        Some(stream)
+    };
+    (&path[..file_len], stream)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -116,5 +146,52 @@ mod tests {
     fn root_and_empty_paths_have_no_components() {
         assert!(path_components("").is_empty());
         assert!(path_components(r"\").is_empty());
+    }
+
+    #[test]
+    fn split_path_stream_plain_path_has_no_stream() {
+        assert_eq!(
+            split_path_stream(r"\dir\file.txt"),
+            (r"\dir\file.txt", None)
+        );
+        assert_eq!(split_path_stream(r"\"), (r"\", None));
+        assert_eq!(split_path_stream(""), ("", None));
+    }
+
+    #[test]
+    fn split_path_stream_extracts_named_ads() {
+        assert_eq!(
+            split_path_stream(r"\dir\file.txt:4n6.status"),
+            (r"\dir\file.txt", Some("4n6.status"))
+        );
+        assert_eq!(
+            split_path_stream(r"\file:4n6.macb"),
+            (r"\file", Some("4n6.macb"))
+        );
+    }
+
+    #[test]
+    fn split_path_stream_strips_data_type_suffix() {
+        assert_eq!(
+            split_path_stream(r"\file:4n6.status:$DATA"),
+            (r"\file", Some("4n6.status"))
+        );
+    }
+
+    #[test]
+    fn split_path_stream_unnamed_main_stream_is_none() {
+        // The explicit unnamed data stream `::$DATA` is the main stream, not an
+        // ADS — it must not be mistaken for a named stream.
+        assert_eq!(split_path_stream(r"\file::$DATA"), (r"\file", None));
+    }
+
+    #[test]
+    fn split_path_stream_only_splits_the_final_component() {
+        // A `:` can appear only in the last component; a directory drive-letter
+        // form is left intact by the caller's path model (leading `\`).
+        assert_eq!(
+            split_path_stream(r"\a\b\c:4n6.status"),
+            (r"\a\b\c", Some("4n6.status"))
+        );
     }
 }

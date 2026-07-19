@@ -19,28 +19,44 @@
 //! This is the read-only MVP: it surfaces the `ForensicFs` tree directly (the
 //! `ro/`/`rw/`/`$Orphans/` overlay parity of the Unix backend is future work).
 //!
-//! TODO(ADR-0008): the recovered-deleted marking channel on Windows is the NTFS
-//! Alternate Data Stream `<name>:4n6.status` / `<name>:4n6.macb`, surfaced via
-//! Dokan's stream enumeration (`find_streams`) — the physical counterpart to
-//! the Unix `user.4n6.*` xattr channel implemented in `fusefs::getxattr`/
-//! `listxattr`. It is **not yet implemented here**: this shell renders neither
-//! the in-place deleted tree nor the marking, so no marking is silently
-//! dropped or fabricated — it is simply absent, and a future `capabilities`
-//! surface (ADR-0007) must report the ADS channel as unsupported on this build
-//! until `find_streams` is wired. Implementing it depends on the Dokan writable
-//! + deleted-rendering unification (ADR-0005/0008 v2), tracked separately.
+//! ## Recovered-deleted marking (ADR-0008 v2)
+//!
+//! The Windows counterpart to the Unix `user.4n6.*` xattr channel is the NTFS
+//! Alternate Data Stream: a recovered deleted/orphan entry exposes
+//! `<name>:4n6.status` and `<name>:4n6.macb`, surfaced by [`find_streams`] and
+//! read back through [`read_file`]. Both render from [`crate::marking`], the
+//! single cross-platform source of truth — so the bytes a Windows tool reads
+//! from `Get-Item -Stream 4n6.status` are identical to what a Unix tool reads
+//! from `getfattr -n user.4n6.status`. A live file exposes only its unnamed
+//! `::$DATA` stream, never a `4n6.*` marker.
+//!
+//! [`find_streams`]: DokanForensicFs::find_streams
+//! [`read_file`]: DokanForensicFs::read_file
+//!
+//! **Runner-verification pending.** Dokan is Windows-only, so this channel is
+//! compiled (`cargo check --target x86_64-pc-windows-msvc`) but not exercised by
+//! the macOS/Linux CI `cargo test`; a Windows runner is required to confirm the
+//! ADS surfaces end-to-end. The marking *values* are fully unit-tested on every
+//! platform via [`crate::marking`]. One residual gap this shell shares with the
+//! Unix parity work: it does not yet inject the recovered-deleted entries into
+//! the visible tree (the `find_files` in-place render), so the ADS marks an
+//! entry only once that deleted-rendering unification lands — the plumbing here
+//! is ready for it.
 
+use std::collections::HashMap;
 use std::sync::Mutex;
 
 use dokan::{
     init, shutdown, CreateFileInfo, DiskSpaceInfo, FileInfo, FileSystemHandler, FileSystemMounter,
-    FillDataError, FillDataResult, FindData, MountFlags, MountOptions as DokanMountOptions,
-    OperationInfo, OperationResult, VolumeInfo, IO_SECURITY_CONTEXT,
+    FillDataError, FillDataResult, FindData, FindStreamData, MountFlags,
+    MountOptions as DokanMountOptions, OperationInfo, OperationResult, VolumeInfo,
+    IO_SECURITY_CONTEXT,
 };
 use widestring::{U16CStr, U16CString};
 
+use crate::marking::{self, Mark, MarkStream};
 use crate::session::Session;
-use crate::win_map::{path_components, to_system_time, windows_attributes};
+use crate::win_map::{path_components, split_path_stream, to_system_time, windows_attributes};
 use crate::{ForensicFs, FsFileType, FsMetadata, MountOptions};
 
 // NTSTATUS codes returned to Dokan (NTSTATUS is a plain i32). Defined locally to
@@ -62,30 +78,52 @@ fn lock_failed() -> i32 {
     STATUS_INVALID_DEVICE_REQUEST
 }
 
+/// The per-handle context: the resolved inode plus, for an Alternate Data
+/// Stream open (`\file:4n6.status`), which marking stream the handle addresses.
+/// `stream == None` is the ordinary unnamed `::$DATA` data stream.
+#[derive(Debug, Clone, Copy)]
+pub struct FileCtx {
+    ino: u64,
+    stream: Option<MarkStream>,
+}
+
 /// A read-only Dokan view over a `ForensicFs`.
 pub struct DokanForensicFs {
     fs: Mutex<Box<dyn ForensicFs + Send>>,
     root_ino: u64,
     label: U16CString,
+    /// `ino -> Mark` for every recovered deleted/orphan node, built once at
+    /// mount time from [`ForensicFs::deleted_nodes`]. Drives the ADS marking:
+    /// an inode in this map exposes the `4n6.*` streams, everything else does
+    /// not.
+    marks: HashMap<u64, Mark>,
 }
 
 impl DokanForensicFs {
-    fn new(fs: Box<dyn ForensicFs + Send>, label: &str) -> Self {
+    fn new(mut fs: Box<dyn ForensicFs + Send>, label: &str) -> Self {
         let root_ino = fs.root_ino();
+        // Snapshot the recovered-deleted marks before the reader is locked away
+        // behind the mutex. A backend without deleted-recovery yields none, so
+        // no entry is ever marked (the honesty gate — never a fabricated mark).
+        let marks = fs
+            .deleted_nodes()
+            .map(|nodes| nodes.iter().map(|n| (n.ino, Mark::from_node(n))).collect())
+            .unwrap_or_default();
         Self {
             fs: Mutex::new(fs),
             root_ino,
             label: U16CString::from_str(label).unwrap_or_default(),
+            marks,
         }
     }
 
-    /// Resolve a Dokan path (`\a\b`) to a `ForensicFs` inode by walking
-    /// `lookup` from the root. Returns `None` if any component is missing.
-    fn resolve(&self, path: &U16CStr) -> Option<u64> {
-        let path = path.to_string_lossy();
+    /// Resolve a Dokan file path (`\a\b`, no ADS suffix) to a `ForensicFs`
+    /// inode by walking `lookup` from the root. Returns `None` if any component
+    /// is missing.
+    fn resolve(&self, path: &str) -> Option<u64> {
         let mut ino = self.root_ino;
         let mut fs = self.fs.lock().ok()?;
-        for comp in path_components(&path) {
+        for comp in path_components(path) {
             ino = fs.lookup(ino, comp.as_bytes()).ok().flatten()?;
         }
         Some(ino)
@@ -94,6 +132,11 @@ impl DokanForensicFs {
     fn metadata(&self, ino: u64) -> OperationResult<FsMetadata> {
         let mut fs = self.fs.lock().map_err(|_| lock_failed())?;
         fs.metadata(ino).map_err(|_| STATUS_OBJECT_NAME_NOT_FOUND)
+    }
+
+    /// The recovered-deleted marking for an inode, or `None` for a live entry.
+    fn mark(&self, ino: u64) -> Option<Mark> {
+        self.marks.get(&ino).copied()
     }
 }
 
@@ -110,9 +153,27 @@ fn file_info(meta: &FsMetadata, ino: u64) -> FileInfo {
     }
 }
 
+/// Report one NTFS stream to Dokan's `find_streams` fill callback, mapping the
+/// fill errors to NTSTATUS exactly as `find_files` does: an unrenderable or
+/// over-long name is skipped (not fatal), a full buffer is a hard overflow.
+fn fill_stream(
+    fill: &mut impl FnMut(&FindStreamData) -> FillDataResult,
+    name: &str,
+    size: i64,
+) -> OperationResult<()> {
+    let Ok(name) = U16CString::from_str(name) else {
+        return Ok(());
+    };
+    match fill(&FindStreamData { size, name }) {
+        Ok(()) | Err(FillDataError::NameTooLong) => Ok(()),
+        Err(FillDataError::BufferFull) => Err(STATUS_BUFFER_OVERFLOW),
+    }
+}
+
 impl<'c, 'h: 'c> FileSystemHandler<'c, 'h> for DokanForensicFs {
-    /// The per-handle context is the resolved inode.
-    type Context = u64;
+    /// The per-handle context is the resolved inode plus an optional marking
+    /// stream (for an ADS open like `\file:4n6.status`).
+    type Context = FileCtx;
 
     #[allow(clippy::too_many_arguments)]
     fn create_file(
@@ -126,13 +187,27 @@ impl<'c, 'h: 'c> FileSystemHandler<'c, 'h> for DokanForensicFs {
         _create_options: u32,
         _info: &mut OperationInfo<'c, 'h, Self>,
     ) -> OperationResult<CreateFileInfo<Self::Context>> {
+        let path = file_name.to_string_lossy();
+        let (file_path, stream_name) = split_path_stream(&path);
         let ino = self
-            .resolve(file_name)
+            .resolve(file_path)
             .ok_or(STATUS_OBJECT_NAME_NOT_FOUND)?;
         let meta = self.metadata(ino)?;
+        // A named ADS is valid only when it is one of our `4n6.*` markers AND
+        // the entry is a recovered-deleted/orphan entry; anything else is "no
+        // such stream". A live file therefore has no openable marking stream.
+        let stream = match stream_name {
+            None => None,
+            Some(name) => Some(
+                MarkStream::from_base(name)
+                    .filter(|_| self.mark(ino).is_some())
+                    .ok_or(STATUS_OBJECT_NAME_NOT_FOUND)?,
+            ),
+        };
         Ok(CreateFileInfo {
-            context: ino,
-            is_dir: matches!(meta.file_type, FsFileType::Directory),
+            context: FileCtx { ino, stream },
+            // An ADS handle addresses a data stream, never a directory.
+            is_dir: stream.is_none() && matches!(meta.file_type, FsFileType::Directory),
             new_file_created: false,
         })
     }
@@ -153,9 +228,19 @@ impl<'c, 'h: 'c> FileSystemHandler<'c, 'h> for DokanForensicFs {
         _info: &OperationInfo<'c, 'h, Self>,
         context: &'c Self::Context,
     ) -> OperationResult<u32> {
+        // A marking-stream handle serves the in-memory `4n6.*` bytes (the exact
+        // schema render), not the file's data.
+        if let Some(stream) = context.stream {
+            let mark = self.mark(context.ino).ok_or(STATUS_OBJECT_NAME_NOT_FOUND)?;
+            let bytes = marking::ads_stream_value(&mark, stream);
+            let start = (offset.max(0) as usize).min(bytes.len());
+            let n = (bytes.len() - start).min(buffer.len());
+            buffer[..n].copy_from_slice(&bytes[start..start + n]);
+            return Ok(n as u32);
+        }
         let data = {
             let mut fs = self.fs.lock().map_err(|_| lock_failed())?;
-            fs.read_file_range(*context, offset.max(0) as u64, buffer.len() as u64)
+            fs.read_file_range(context.ino, offset.max(0) as u64, buffer.len() as u64)
                 .map_err(|_| STATUS_INVALID_DEVICE_REQUEST)?
         };
         let n = data.len().min(buffer.len());
@@ -169,8 +254,8 @@ impl<'c, 'h: 'c> FileSystemHandler<'c, 'h> for DokanForensicFs {
         _info: &OperationInfo<'c, 'h, Self>,
         context: &'c Self::Context,
     ) -> OperationResult<FileInfo> {
-        let meta = self.metadata(*context)?;
-        Ok(file_info(&meta, *context))
+        let meta = self.metadata(context.ino)?;
+        Ok(file_info(&meta, context.ino))
     }
 
     fn find_files(
@@ -182,7 +267,7 @@ impl<'c, 'h: 'c> FileSystemHandler<'c, 'h> for DokanForensicFs {
     ) -> OperationResult<()> {
         let mut entries = {
             let mut fs = self.fs.lock().map_err(|_| lock_failed())?;
-            fs.read_dir(*context)
+            fs.read_dir(context.ino)
                 .map_err(|_| STATUS_INVALID_DEVICE_REQUEST)?
         };
         // Stable order for a deterministic listing.
@@ -210,6 +295,38 @@ impl<'c, 'h: 'c> FileSystemHandler<'c, 'h> for DokanForensicFs {
                 // A single over-long name shouldn't make the whole dir unreadable.
                 Err(FillDataError::NameTooLong) => continue,
                 Err(FillDataError::BufferFull) => return Err(STATUS_BUFFER_OVERFLOW),
+            }
+        }
+        Ok(())
+    }
+
+    /// Enumerate a file's NTFS data streams. Every file reports its unnamed
+    /// `::$DATA` stream; a recovered deleted/orphan entry additionally reports
+    /// the marking streams `:4n6.status:$DATA` and `:4n6.macb:$DATA` (ADR-0008
+    /// v2, the Windows counterpart to the Unix `user.4n6.*` xattrs). A live
+    /// file reports only `::$DATA`. Directories have no data stream.
+    fn find_streams(
+        &'h self,
+        _file_name: &U16CStr,
+        mut fill_find_stream_data: impl FnMut(&FindStreamData) -> FillDataResult,
+        _info: &OperationInfo<'c, 'h, Self>,
+        context: &'c Self::Context,
+    ) -> OperationResult<()> {
+        let meta = self.metadata(context.ino)?;
+        if matches!(meta.file_type, FsFileType::Directory) {
+            return Ok(());
+        }
+        // The unnamed data stream, present on every file.
+        fill_stream(&mut fill_find_stream_data, "::$DATA", meta.size as i64)?;
+        // The out-of-band marking streams, only on a recovered-deleted entry.
+        if let Some(mark) = self.mark(context.ino) {
+            for stream in marking::ADS_STREAMS {
+                let bytes = marking::ads_stream_value(&mark, stream);
+                fill_stream(
+                    &mut fill_find_stream_data,
+                    &stream.ads_full_name(),
+                    bytes.len() as i64,
+                )?;
             }
         }
         Ok(())
