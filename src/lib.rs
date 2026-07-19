@@ -177,6 +177,111 @@ impl Default for MountOptions {
     }
 }
 
+/// A single-owner `Read + Seek` view over a `forensic-vfs` [`DynSource`], the
+/// call-site adapter memf needs (ADR 0011): `memf-format` deliberately does not
+/// depend on `forensic-vfs`, so the positioned-read `ImageSource` edge is bridged
+/// to `memf_format::DumpReader` (`Read + Seek + Send`) here. The `DynSource`
+/// (`Arc<dyn ImageSource>`, `Send + Sync`) makes this `Send`; `memf` reads the
+/// whole source once via `read_to_end`.
+#[cfg(feature = "memory")]
+struct DynSourceDumpReader {
+    src: forensic_vfs::DynSource,
+    pos: u64,
+    len: u64,
+}
+
+#[cfg(feature = "memory")]
+impl DynSourceDumpReader {
+    fn new(src: forensic_vfs::DynSource) -> Self {
+        let len = src.len();
+        Self { src, pos: 0, len }
+    }
+}
+
+#[cfg(feature = "memory")]
+impl io::Read for DynSourceDumpReader {
+    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+        let n = self
+            .src
+            .read_at(self.pos, buf)
+            .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e.to_string()))?;
+        self.pos += n as u64;
+        Ok(n)
+    }
+}
+
+#[cfg(feature = "memory")]
+impl io::Seek for DynSourceDumpReader {
+    fn seek(&mut self, pos: io::SeekFrom) -> io::Result<u64> {
+        let new = match pos {
+            io::SeekFrom::Start(o) => Some(o),
+            io::SeekFrom::End(d) => self.len.checked_add_signed(d),
+            io::SeekFrom::Current(d) => self.pos.checked_add_signed(d),
+        };
+        match new {
+            Some(p) => {
+                self.pos = p;
+                Ok(p)
+            }
+            None => Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "seek to a negative or overflowing offset",
+            )),
+        }
+    }
+}
+
+/// Open a (possibly wrapped) memory dump into a physical-memory provider.
+///
+/// The forensic-vfs resolver first peels any archive/compression/container
+/// packaging (`memory.zip`, `memory.dd.gz`, `dump.7z`, nested combinations) down
+/// to the innermost raw byte edge (ADR 0011 `resolve_to_source`); that
+/// [`DynSource`](forensic_vfs::DynSource) is adapted to a `Read + Seek` source and
+/// handed to `memf_format::open_source_with_raw_fallback`, which runs the same
+/// format detection as the path-based `open_dump` but also accepts a headerless
+/// raw dump (the caller has asserted this is a memory dump). A bare, unwrapped
+/// dump peels to itself and takes the identical path.
+///
+/// # Errors
+///
+/// Fails LOUD as `InvalidData` on a resolver read/decode error, a packaging bomb
+/// that exceeds the recursion cap (no terminal), or a memf format/construction
+/// error — never a silently empty provider.
+#[cfg(feature = "memory")]
+pub fn open_memory_provider(
+    image: &Path,
+) -> io::Result<Box<dyn memf_format::PhysicalMemoryProvider>> {
+    use forensic_vfs_resolver::SourceOpen as _;
+    let bad = |msg: String| io::Error::new(io::ErrorKind::InvalidData, msg);
+
+    let base: forensic_vfs::DynSource = std::sync::Arc::new(
+        forensic_vfs::adapters::FileSource::open(image)
+            .map_err(|e| bad(format!("cannot open memory dump {}: {e}", image.display())))?,
+    );
+    let base_spec = forensic_vfs::PathSpec::os(image);
+
+    // A memory dump's only packaging is an archive or compression wrapper
+    // (memory.zip / .gz / .7z / .tar, nested) — it is a flat page stream, never a
+    // partitioned/encrypted disk, so the disk-container probers (VMDK/VHD/AFF4/…)
+    // do not belong here. That scoping is also correct-by-omission: AFF4 is
+    // ZIP-based and probes `Maybe` on any PK magic, so including it would let it
+    // hard-fail-claim a plain memory.zip before the archive peeler runs.
+    let openers = forensic_vfs::Openers::new().archive(archive_core::ArchiveOpener);
+    let resolved = openers
+        .resolve_to_source(base, base_spec, 0)
+        .map_err(|e| bad(format!("unwrapping memory dump {}: {e}", image.display())))?
+        .ok_or_else(|| {
+            bad(format!(
+                "could not unwrap memory dump {} (packaging recursion cap hit)",
+                image.display()
+            ))
+        })?;
+
+    let reader = DynSourceDumpReader::new(resolved.source);
+    memf_format::open_source_with_raw_fallback(Box::new(reader))
+        .map_err(|e| bad(format!("cannot open memory dump {}: {e}", image.display())))
+}
+
 /// Open a memory dump and build a [`MemoryFs`] over it, bootstrapping the
 /// analysis context (OS, DTB/CR3, kernel list-heads) via `memf-session`.
 ///
@@ -198,8 +303,7 @@ pub fn build_memory_fs(
 ) -> io::Result<Box<dyn ForensicFs + Send>> {
     let bad = |msg: String| io::Error::new(io::ErrorKind::InvalidData, msg);
 
-    let provider = memf_format::open_dump(image)
-        .map_err(|e| bad(format!("cannot open memory dump {}: {e}", image.display())))?;
+    let provider = open_memory_provider(image)?;
 
     // Load symbols if given; otherwise an empty resolver (sufficient for a
     // crash dump whose header carries CR3 + list-heads).
@@ -287,6 +391,76 @@ mod memory_tests {
             .expect("os-info.txt");
         let text = String::from_utf8(fs.read_file(oi).unwrap()).unwrap();
         assert!(text.contains("OS: Windows"), "got: {text}");
+
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// ADR-0011: a memory dump wrapped in an archive (`.zip`) or nested
+    /// compression (`.zip.gz`) must read back the SAME physical pages as the bare
+    /// raw dump — proving the `resolve_to_source` (peel) -> `DynSource`/`DumpReader`
+    /// adapt -> `open_source_with_raw_fallback` chain in `open_memory_provider`.
+    /// A headerless raw dump (Raw format, probe score 5) also exercises the
+    /// raw-fallback below-threshold path the resolver hands memf.
+    #[test]
+    fn wrapped_memory_dump_reads_same_pages_as_raw() {
+        use memf_format::PhysicalMemoryProvider;
+        use std::io::Write as _;
+
+        // Deterministic headerless raw dump content.
+        let page: Vec<u8> = (0..4096u32).map(|i| (i % 251) as u8).collect();
+
+        let dir = std::env::temp_dir().join(format!("4n6mem_wrap_{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+
+        // (1) raw baseline
+        let raw_path = dir.join("memory.raw");
+        std::fs::write(&raw_path, &page).unwrap();
+
+        // (2) .zip-wrapped, Stored so archive-core reads the member in place
+        let mut zip_bytes = Vec::new();
+        {
+            let mut zw = zip::ZipWriter::new(std::io::Cursor::new(&mut zip_bytes));
+            let opts = zip::write::SimpleFileOptions::default()
+                .compression_method(zip::CompressionMethod::Stored);
+            zw.start_file("memory.raw", opts).unwrap();
+            zw.write_all(&page).unwrap();
+            zw.finish().unwrap();
+        }
+        let zip_path = dir.join("memory.zip");
+        std::fs::write(&zip_path, &zip_bytes).unwrap();
+
+        // (3) nested .zip.gz (gzip over the zip bytes)
+        let gz_path = dir.join("memory.zip.gz");
+        {
+            let mut enc = flate2::write::GzEncoder::new(
+                std::fs::File::create(&gz_path).unwrap(),
+                flate2::Compression::default(),
+            );
+            enc.write_all(&zip_bytes).unwrap();
+            enc.finish().unwrap();
+        }
+
+        let read_first_page = |p: &std::path::Path| -> Vec<u8> {
+            let provider = open_memory_provider(p).expect("open wrapped/raw memory provider");
+            assert_eq!(provider.format_name(), "Raw");
+            assert_eq!(provider.total_size(), page.len() as u64);
+            let mut got = vec![0u8; page.len()];
+            let n = provider.read_phys(0, &mut got).unwrap();
+            got.truncate(n);
+            got
+        };
+
+        assert_eq!(read_first_page(&raw_path), page, "raw baseline");
+        assert_eq!(
+            read_first_page(&zip_path),
+            page,
+            ".zip-wrapped dump reads the same pages as raw"
+        );
+        assert_eq!(
+            read_first_page(&gz_path),
+            page,
+            "nested .zip.gz dump reads the same pages as raw"
+        );
 
         std::fs::remove_dir_all(&dir).ok();
     }
