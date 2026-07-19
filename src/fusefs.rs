@@ -3124,4 +3124,59 @@ mod tests {
         assert!(cache_has_orphans(entries));
         assert!(!cache_has_orphans(&[]));
     }
+
+    // -----------------------------------------------------------------------
+    // ADR 0008 v2 (c): the deleted status + recovered MACB times ride an
+    // out-of-band xattr channel (user.4n6.*), never a name/mode decoration.
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn iso8601_utc_renders_zulu() {
+        // Colon-form ISO-8601 (xattr value, not a filename).
+        assert_eq!(iso8601_utc(1_700_000_000), "2023-11-14T22:13:20Z");
+        assert_eq!(iso8601_utc(200), "1970-01-01T00:03:20Z");
+    }
+
+    #[test]
+    fn deleted_xattr_names_are_the_marking_schema() {
+        let names = deleted_xattr_names();
+        for want in [
+            "user.4n6.status",
+            "user.4n6.macb.modified",
+            "user.4n6.macb.accessed",
+            "user.4n6.macb.changed",
+            "user.4n6.macb.born",
+        ] {
+            assert!(names.contains(&want), "missing {want}: {names:?}");
+        }
+        assert_eq!(names.len(), 5);
+    }
+
+    #[test]
+    fn deleted_xattr_value_status_and_macb() {
+        let fuse = make_mock_fuse_mode(crate::DeletedMode::Latest);
+        fuse.ensure_deleted_cache();
+        let cache = fuse.deleted_cache.borrow();
+        let entries = cache.as_ref().expect("cache populated");
+        let by = |ino: u64| entries.iter().find(|e| e.fs_ino == ino).unwrap();
+
+        // In-place Deleted entry (ino 100) -> status "deleted".
+        let a = by(100);
+        assert_eq!(
+            deleted_xattr_value(a, "user.4n6.status").as_deref(),
+            Some(b"deleted".as_ref())
+        );
+        // Recovered mtime surfaces as ISO-8601 UTC (mock mtime seconds = 200).
+        assert_eq!(
+            deleted_xattr_value(a, "user.4n6.macb.modified").as_deref(),
+            Some(b"1970-01-01T00:03:20Z".as_ref())
+        );
+        // True orphan (ino 103) -> status "orphan".
+        assert_eq!(
+            deleted_xattr_value(by(103), "user.4n6.status").as_deref(),
+            Some(b"orphan".as_ref())
+        );
+        // Unknown attribute -> None (getxattr replies ENODATA).
+        assert!(deleted_xattr_value(a, "user.4n6.nope").is_none());
+    }
 }
