@@ -2251,6 +2251,9 @@ mod tests {
             match ino {
                 10 => Ok(b"Hello, mock!".to_vec()),
                 12 => Ok(b"Nested file".to_vec()),
+                // Deleted nodes whose content is recoverable.
+                100 | 101 | 102 | 103 => Ok(vec![0xAB; 100]),
+                // 104 (gone.txt) deliberately unreadable — falls through to Err.
                 _ => Err(FsError::NotFound(format!("inode {ino}"))),
             }
         }
@@ -2274,6 +2277,73 @@ mod tests {
                 dtime: 1_700_001_000,
                 recoverability: 0.75,
             }])
+        }
+
+        fn deleted_nodes(&mut self) -> FsResult<Vec<crate::FsDeletedNode>> {
+            let mk = |ino: u64,
+                      name: &[u8],
+                      parent: Option<u64>,
+                      mtime: i64,
+                      record_id: u64,
+                      allocation: crate::FsAllocation| {
+                crate::FsDeletedNode {
+                    ino,
+                    name: name.to_vec(),
+                    parent_ino: parent,
+                    size: 100,
+                    file_type: FsFileType::RegularFile,
+                    allocation,
+                    record_id,
+                    atime: FsTimestamp::default(),
+                    mtime: FsTimestamp {
+                        seconds: mtime,
+                        nanoseconds: 0,
+                    },
+                    ctime: FsTimestamp::default(),
+                    crtime: FsTimestamp::default(),
+                }
+            };
+            Ok(vec![
+                // Two same-name deletes under the live root (ino 2): newest wins
+                // the in-place slot, the older is a same-name orphan.
+                mk(
+                    100,
+                    b"report.txt",
+                    Some(2),
+                    200,
+                    100,
+                    crate::FsAllocation::Deleted,
+                ),
+                mk(
+                    101,
+                    b"report.txt",
+                    Some(2),
+                    100,
+                    101,
+                    crate::FsAllocation::Deleted,
+                ),
+                // Collides with the live hello.txt (ino 10) -> $Orphans.
+                mk(
+                    102,
+                    b"hello.txt",
+                    Some(2),
+                    300,
+                    102,
+                    crate::FsAllocation::Deleted,
+                ),
+                // Nameless true orphan (no parent) -> $Orphans.
+                mk(103, b"", None, 150, 103, crate::FsAllocation::Orphan),
+                // In-place candidate whose content is unreadable (ino 104 errors
+                // in read_file) -> honest unreadable marker, never a 0-byte fake.
+                mk(
+                    104,
+                    b"gone.txt",
+                    Some(2),
+                    250,
+                    104,
+                    crate::FsAllocation::Deleted,
+                ),
+            ])
         }
 
         fn recover_file(&mut self, ino: u64) -> FsResult<FsRecoveryResult> {
@@ -2443,5 +2513,93 @@ mod tests {
             entries.is_empty(),
             "mock has no journal_transactions override, should be empty"
         );
+    }
+
+    // -----------------------------------------------------------------------
+    // Deleted-node placement (Task 2): real names, in-place vs $Orphans, gating
+    // -----------------------------------------------------------------------
+
+    fn make_mock_fuse_mode(mode: crate::DeletedMode) -> ForensicFuseFs {
+        ForensicFuseFs::new(
+            Box::new(MockForensicFs),
+            None,
+            crate::MountLayout::DiskOverlay,
+            mode,
+        )
+    }
+
+    #[test]
+    fn filename_safe_utc_has_no_colons() {
+        // 1_700_000_000 == 2023-11-14T22:13:20Z -> colons become hyphens.
+        assert_eq!(filename_safe_utc(1_700_000_000), "2023-11-14T22-13-20Z");
+    }
+
+    #[test]
+    fn deleted_cache_latest_places_newest_in_place() {
+        let fuse = make_mock_fuse_mode(crate::DeletedMode::Latest);
+        fuse.ensure_deleted_cache();
+        let cache = fuse.deleted_cache.borrow();
+        let entries = cache.as_ref().expect("cache populated");
+        let by = |ino: u64| {
+            entries
+                .iter()
+                .find(|e| e.fs_ino == ino)
+                .unwrap_or_else(|| panic!("no cache entry for ino {ino}"))
+        };
+        // Newest report.txt renders in-place under its real name.
+        let a = by(100);
+        assert_eq!(a.name, "report.txt");
+        assert!(!a.orphan);
+        // Older same-name delete -> $Orphans, disambiguated `<name>@<ts>Z~<id>`.
+        let b = by(101);
+        assert!(b.orphan);
+        assert!(b.name.starts_with("report.txt@"), "got {}", b.name);
+        assert!(b.name.ends_with("~101"), "got {}", b.name);
+        // Live-name collision -> $Orphans.
+        assert!(by(102).orphan);
+        // Nameless true orphan -> $Orphans.
+        assert!(by(103).orphan);
+        // In-place but unreadable content -> honest marker, not a 0-byte fake.
+        let g = by(104);
+        assert_eq!(g.name, "gone.txt");
+        assert!(!g.orphan);
+        assert!(!g.readable);
+    }
+
+    #[test]
+    fn deleted_cache_off_is_empty() {
+        let fuse = make_mock_fuse_mode(crate::DeletedMode::Off);
+        fuse.ensure_deleted_cache();
+        assert!(fuse
+            .deleted_cache
+            .borrow()
+            .as_ref()
+            .expect("cache populated")
+            .is_empty());
+    }
+
+    #[test]
+    fn deleted_cache_all_routes_everything_to_orphans() {
+        let fuse = make_mock_fuse_mode(crate::DeletedMode::All);
+        fuse.ensure_deleted_cache();
+        let cache = fuse.deleted_cache.borrow();
+        let entries = cache.as_ref().expect("cache populated");
+        assert_eq!(entries.len(), 5);
+        assert!(
+            entries.iter().all(|e| e.orphan),
+            "All -> every instance orphan"
+        );
+        let a = entries.iter().find(|e| e.fs_ino == 100).unwrap();
+        assert!(a.name.starts_with("report.txt@"), "got {}", a.name);
+    }
+
+    #[test]
+    fn deleted_cache_never_fabricates_unknown_names() {
+        let fuse = make_mock_fuse_mode(crate::DeletedMode::Latest);
+        fuse.ensure_deleted_cache();
+        let cache = fuse.deleted_cache.borrow();
+        for e in cache.as_ref().expect("cache populated") {
+            assert!(!e.name.ends_with("_unknown"), "fabricated: {}", e.name);
+        }
     }
 }
