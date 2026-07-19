@@ -17,7 +17,18 @@
 //! is validated end-to-end by the Dokan mount-smoke test.
 //!
 //! This is the read-only MVP: it surfaces the `ForensicFs` tree directly (the
-//! `ro/`/`rw/`/`deleted/` overlay parity of the Unix backend is future work).
+//! `ro/`/`rw/`/`$Orphans/` overlay parity of the Unix backend is future work).
+//!
+//! TODO(ADR-0008): the recovered-deleted marking channel on Windows is the NTFS
+//! Alternate Data Stream `<name>:4n6.status` / `<name>:4n6.macb`, surfaced via
+//! Dokan's stream enumeration (`find_streams`) — the physical counterpart to
+//! the Unix `user.4n6.*` xattr channel implemented in `fusefs::getxattr`/
+//! `listxattr`. It is **not yet implemented here**: this shell renders neither
+//! the in-place deleted tree nor the marking, so no marking is silently
+//! dropped or fabricated — it is simply absent, and a future `capabilities`
+//! surface (ADR-0007) must report the ADS channel as unsupported on this build
+//! until `find_streams` is wired. Implementing it depends on the Dokan writable
+//! + deleted-rendering unification (ADR-0005/0008 v2), tracked separately.
 
 use std::sync::Mutex;
 
