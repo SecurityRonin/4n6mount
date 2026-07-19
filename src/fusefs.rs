@@ -706,24 +706,8 @@ fn filename_safe_utc(secs: i64) -> String {
     let days = secs.div_euclid(86_400);
     let tod = secs.rem_euclid(86_400);
     let (h, m, s) = (tod / 3600, (tod % 3600) / 60, tod % 60);
-    let (y, mon, d) = civil_from_days(days);
+    let (y, mon, d) = crate::marking::civil_from_days(days);
     format!("{y:04}-{mon:02}-{d:02}T{h:02}-{m:02}-{s:02}Z")
-}
-
-/// Days since the Unix epoch → (year, month, day). Howard Hinnant's
-/// `civil_from_days` (public domain), valid across the whole i64 range.
-#[allow(clippy::many_single_char_names)] // canonical algorithm's variable names
-fn civil_from_days(z: i64) -> (i64, u32, u32) {
-    let z = z + 719_468;
-    let era = if z >= 0 { z } else { z - 146_096 } / 146_097;
-    let doe = (z - era * 146_097) as u64; // [0, 146096]
-    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365; // [0, 399]
-    let y = yoe as i64 + era * 400;
-    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100); // [0, 365]
-    let mp = (5 * doy + 2) / 153; // [0, 11]
-    let d = (doy - (153 * mp + 2) / 5 + 1) as u32; // [1, 31]
-    let m = if mp < 10 { mp + 3 } else { mp - 9 } as u32; // [1, 12]
-    (if m <= 2 { y + 1 } else { y }, m, d)
 }
 
 /// One `timeline.jsonl` row for a recovered deleted instance. Emitting one row
@@ -739,10 +723,7 @@ fn deleted_timeline_row(e: &DeletedEntry) -> String {
     } else {
         e.real_name.clone()
     };
-    let allocation = match e.allocation {
-        FsAllocation::Deleted => "deleted",
-        FsAllocation::Orphan => "orphan",
-    };
+    let allocation = crate::marking::status_str(e.allocation);
     let row = serde_json::json!({
         "path": path,
         "name": e.real_name,
@@ -776,31 +757,27 @@ fn deleted_in_place_children(entries: &[DeletedEntry], parent_fs_ino: u64) -> Ve
         .collect()
 }
 
-/// Format Unix seconds as ISO-8601 UTC `YYYY-MM-DDTHH:MM:SSZ` — the xattr
-/// *value* form (colons are legal in a value, unlike a filename), reusing the
-/// same civil-date math as [`filename_safe_utc`].
-#[allow(clippy::many_single_char_names)] // conventional date-field names
-fn iso8601_utc(secs: i64) -> String {
-    let days = secs.div_euclid(86_400);
-    let tod = secs.rem_euclid(86_400);
-    let (h, m, s) = (tod / 3600, (tod % 3600) / 60, tod % 60);
-    let (y, mon, d) = civil_from_days(days);
-    format!("{y:04}-{mon:02}-{d:02}T{h:02}:{m:02}:{s:02}Z")
+/// A [`crate::marking::Mark`] for a cached deleted entry — the adapter from this
+/// module's `DeletedEntry` onto the platform-agnostic marking schema, so the
+/// Unix xattr channel renders the exact same values the Windows ADS channel does.
+fn entry_mark(entry: &DeletedEntry) -> crate::marking::Mark {
+    crate::marking::Mark {
+        allocation: entry.allocation,
+        macb: crate::marking::Macb {
+            modified: entry.macb.modified.seconds,
+            accessed: entry.macb.accessed.seconds,
+            changed: entry.macb.changed.seconds,
+            born: entry.macb.born.seconds,
+        },
+    }
 }
 
 /// The out-of-band marking schema exposed on a recovered-deleted entry (ADR
 /// 0008 v2): the deleted/orphan status plus the recovered MACB times. Live
-/// files carry none of these — the xattr channel is the mount's red-X.
-const DELETED_XATTR_NAMES: &[&str] = &[
-    "user.4n6.status",
-    "user.4n6.macb.modified",
-    "user.4n6.macb.accessed",
-    "user.4n6.macb.changed",
-    "user.4n6.macb.born",
-];
-
+/// files carry none of these — the xattr channel is the mount's red-X. The names
+/// and values are owned by [`crate::marking`], the single source of truth.
 fn deleted_xattr_names() -> &'static [&'static str] {
-    DELETED_XATTR_NAMES
+    &crate::marking::UNIX_XATTR_NAMES
 }
 
 /// Value of one xattr on a recovered-deleted entry, or `None` when the name is
@@ -808,18 +785,7 @@ fn deleted_xattr_names() -> &'static [&'static str] {
 /// `user.4n6.status` is `deleted`|`orphan`; the `macb.*` values are ISO-8601
 /// UTC. This is a metadata-only channel — the recovered content is untouched.
 fn deleted_xattr_value(entry: &DeletedEntry, name: &str) -> Option<Vec<u8>> {
-    let v = match name {
-        "user.4n6.status" => match entry.allocation {
-            FsAllocation::Deleted => "deleted".to_string(),
-            FsAllocation::Orphan => "orphan".to_string(),
-        },
-        "user.4n6.macb.modified" => iso8601_utc(entry.macb.modified.seconds),
-        "user.4n6.macb.accessed" => iso8601_utc(entry.macb.accessed.seconds),
-        "user.4n6.macb.changed" => iso8601_utc(entry.macb.changed.seconds),
-        "user.4n6.macb.born" => iso8601_utc(entry.macb.born.seconds),
-        _ => return None,
-    };
-    Some(v.into_bytes())
+    crate::marking::unix_xattr_value(&entry_mark(entry), name)
 }
 
 /// Copy-up base bytes for an in-place recovered-deleted entry: its recovered
@@ -3322,13 +3288,6 @@ mod tests {
     // ADR 0008 v2 (c): the deleted status + recovered MACB times ride an
     // out-of-band xattr channel (user.4n6.*), never a name/mode decoration.
     // -----------------------------------------------------------------------
-
-    #[test]
-    fn iso8601_utc_renders_zulu() {
-        // Colon-form ISO-8601 (xattr value, not a filename).
-        assert_eq!(iso8601_utc(1_700_000_000), "2023-11-14T22:13:20Z");
-        assert_eq!(iso8601_utc(200), "1970-01-01T00:03:20Z");
-    }
 
     #[test]
     fn deleted_xattr_names_are_the_marking_schema() {

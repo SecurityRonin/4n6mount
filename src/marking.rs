@@ -45,7 +45,15 @@ impl Mark {
     /// canonical MACB mapping (mtime→modified, atime→accessed, ctime→changed,
     /// crtime→born).
     pub fn from_node(node: &FsDeletedNode) -> Self {
-        todo!()
+        Self {
+            allocation: node.allocation,
+            macb: Macb {
+                modified: node.mtime.seconds,
+                accessed: node.atime.seconds,
+                changed: node.ctime.seconds,
+                born: node.crtime.seconds,
+            },
+        }
     }
 }
 
@@ -73,50 +81,93 @@ pub const ADS_STREAMS: [MarkStream; 2] = [MarkStream::Status, MarkStream::Macb];
 impl MarkStream {
     /// The bare NTFS stream name (no `:` delimiters, no `:$DATA` type suffix).
     pub fn base(self) -> &'static str {
-        todo!()
+        match self {
+            MarkStream::Status => "4n6.status",
+            MarkStream::Macb => "4n6.macb",
+        }
     }
 
     /// Parse a bare NTFS stream name into a marking stream, or `None` when it is
     /// not one of ours (so a foreign ADS is never misread as a 4n6 marker).
     pub fn from_base(base: &str) -> Option<Self> {
-        todo!()
+        match base {
+            "4n6.status" => Some(MarkStream::Status),
+            "4n6.macb" => Some(MarkStream::Macb),
+            _ => None,
+        }
     }
 
     /// The full NTFS stream name Dokan reports for this stream, e.g.
     /// `:4n6.status:$DATA`.
     pub fn ads_full_name(self) -> String {
-        todo!()
+        format!(":{}:$DATA", self.base())
     }
 }
 
 /// The status word for an allocation state: `deleted` or `orphan`.
 pub fn status_str(allocation: FsAllocation) -> &'static str {
-    todo!()
+    match allocation {
+        FsAllocation::Deleted => "deleted",
+        FsAllocation::Orphan => "orphan",
+    }
 }
 
 /// Format Unix seconds as ISO-8601 UTC `YYYY-MM-DDTHH:MM:SSZ` — the marking
 /// *value* form (colons are legal inside a value, unlike a filename).
+#[allow(clippy::many_single_char_names)] // conventional date-field names
 pub fn iso8601_utc(secs: i64) -> String {
-    todo!()
+    let days = secs.div_euclid(86_400);
+    let tod = secs.rem_euclid(86_400);
+    let (h, m, s) = (tod / 3600, (tod % 3600) / 60, tod % 60);
+    let (y, mon, d) = civil_from_days(days);
+    format!("{y:04}-{mon:02}-{d:02}T{h:02}:{m:02}:{s:02}Z")
 }
 
 /// Value of one Unix xattr on a marked entry, or `None` when `name` is outside
 /// the schema (the getxattr shell then replies `ENODATA`).
 pub fn unix_xattr_value(mark: &Mark, name: &str) -> Option<Vec<u8>> {
-    todo!()
+    let v = match name {
+        "user.4n6.status" => status_str(mark.allocation).to_string(),
+        "user.4n6.macb.modified" => iso8601_utc(mark.macb.modified),
+        "user.4n6.macb.accessed" => iso8601_utc(mark.macb.accessed),
+        "user.4n6.macb.changed" => iso8601_utc(mark.macb.changed),
+        "user.4n6.macb.born" => iso8601_utc(mark.macb.born),
+        _ => return None,
+    };
+    Some(v.into_bytes())
 }
 
 /// Bytes of one marking ADS stream on a marked entry. The `Status` stream is the
 /// status word; the `Macb` stream is a JSON object of the four ISO-8601 times.
 pub fn ads_stream_value(mark: &Mark, stream: MarkStream) -> Vec<u8> {
-    todo!()
+    match stream {
+        MarkStream::Status => status_str(mark.allocation).as_bytes().to_vec(),
+        MarkStream::Macb => {
+            let obj = serde_json::json!({
+                "modified": iso8601_utc(mark.macb.modified),
+                "accessed": iso8601_utc(mark.macb.accessed),
+                "changed": iso8601_utc(mark.macb.changed),
+                "born": iso8601_utc(mark.macb.born),
+            });
+            serde_json::to_vec(&obj).unwrap_or_default()
+        }
+    }
 }
 
 /// Days since the Unix epoch → (year, month, day). Howard Hinnant's
 /// `civil_from_days` (public domain), valid across the whole i64 range.
 #[allow(clippy::many_single_char_names)] // canonical algorithm's variable names
 pub(crate) fn civil_from_days(z: i64) -> (i64, u32, u32) {
-    todo!()
+    let z = z + 719_468;
+    let era = if z >= 0 { z } else { z - 146_096 } / 146_097;
+    let doe = (z - era * 146_097) as u64; // [0, 146096]
+    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365; // [0, 399]
+    let y = yoe as i64 + era * 400;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100); // [0, 365]
+    let mp = (5 * doy + 2) / 153; // [0, 11]
+    let d = (doy - (153 * mp + 2) / 5 + 1) as u32; // [1, 31]
+    let m = if mp < 10 { mp + 3 } else { mp - 9 } as u32; // [1, 12]
+    (if m <= 2 { y + 1 } else { y }, m, d)
 }
 
 #[cfg(test)]

@@ -59,7 +59,25 @@ pub fn path_components(path: &str) -> Vec<&str> {
 /// `:$DATA` stream-type suffix is stripped, and the unnamed main stream — no
 /// suffix, or the explicit `::$DATA` — yields `None`.
 pub fn split_path_stream(path: &str) -> (&str, Option<&str>) {
-    todo!()
+    // The ADS suffix lives only on the final component; locate it, then split
+    // that tail on its first `:`.
+    let comp_start = path.rfind(['\\', '/']).map_or(0, |i| i + 1);
+    let (head, last) = path.split_at(comp_start);
+    let Some(colon) = last.find(':') else {
+        return (path, None);
+    };
+    // `file` is everything up to the stream delimiter; the stream is the rest,
+    // minus a trailing `:$DATA` type suffix.
+    let file_len = head.len() + colon;
+    let stream = &last[colon + 1..];
+    let stream = stream.strip_suffix(":$DATA").unwrap_or(stream);
+    let stream = stream.strip_suffix("$DATA").unwrap_or(stream);
+    let stream = if stream.is_empty() {
+        None
+    } else {
+        Some(stream)
+    };
+    (&path[..file_len], stream)
 }
 
 #[cfg(test)]
