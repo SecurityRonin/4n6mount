@@ -44,7 +44,7 @@ forensic-vfs = "0.4"
 # (evidence.dd.gz -> dd) before the engine opens the inner image.
 archive-core = { version = "0.1.0", path = "../archive-forensic/core" }
 tempfile = "3"
-memf-format = { version = "0.2", path = "../memory-forensic/crates/memf-format", optional = true }
+memf-format = { version = "0.3", path = "../memory-forensic/crates/memf-format", optional = true }
 memf-core = { version = "0.2", path = "../memory-forensic/crates/memf-core", optional = true }
 memf-session = { version = "0.3", path = "../memory-forensic/crates/memf-session", optional = true }
 memf-symbols = { version = "0.2", path = "../memory-forensic/crates/memf-symbols", optional = true }
