@@ -78,19 +78,10 @@ dokan = "0.3"
 # (dokan 0.3.1 uses widestring 0.4); a 1.x here is a distinct, incompatible type.
 widestring = "0.4"
 
-# Development-only: unify `forensic-vfs` across this crate and the engine on the
-# local checkout so both see `deleted_nodes()`. The reader crates below are the
-# fleet's local 0.4 checkouts — their published versions still require
-# forensic-vfs 0.2/0.3 (the 0.4 republish is gated), so bridging them to local
-# keeps the whole engine graph on one forensic-vfs 0.4. Removed at publish time.
-[patch.crates-io]
-forensic-vfs = { path = "../forensic-vfs/crates/core" }
-ntfs-core = { path = "../ntfs-forensic/core" }
-ext4fs-core = { path = "../ext4fs-forensic/ext4fs-core" }
-fat-core = { path = "../fat-forensic/core" }
-hfsplus-forensic = { path = "../hfsplus-forensic" }
-apfs-core = { path = "../apfs-forensic/core" }
-iso9660-forensic = { path = "../iso9660-forensic/iso" }
+# Post-cascade (2026-07): the dev [patch.crates-io] bridges to local reader
+# checkouts are removed — forensic-vfs 0.4.3 (with deleted_nodes()), ntfs-core
+# 0.9.3, and the fs readers are all published on forensic-vfs 0.4, so the whole
+# engine graph now resolves from the registry.
 
 [lints.rust]
 unsafe_code = "forbid"

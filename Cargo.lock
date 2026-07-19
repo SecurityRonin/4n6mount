@@ -187,6 +187,8 @@ checksum = "330a5ed07fa54e4702c9d6c4174f74427fc0ef6e214bbd677ae50a5099946470"
 [[package]]
 name = "apfs-core"
 version = "0.2.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "027e1fd6d460c601e3da7025bfa65a047060fa7e1a9259774e12b3f53d12a753"
 dependencies = [
  "bitflags 2.13.1",
  "chrono",
@@ -1300,6 +1302,8 @@ dependencies = [
 [[package]]
 name = "ext4fs-core"
 version = "0.2.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2ea9eaf0a6aba35244fd80b33b2f1034cc32dd53a5afc6117be8c3c8be154b83"
 dependencies = [
  "bitflags 2.13.1",
  "blazehash-core",
@@ -1335,6 +1339,8 @@ checksum = "9f1f227452a390804cdb637b74a86990f2a7d7ba4b7d5693aac9b4dd6defd8d6"
 [[package]]
 name = "fat-core"
 version = "0.1.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1c5a276d88d88b9e3642b28788d2548e38528be31364d0dacc97adcc41bed7ea"
 dependencies = [
  "forensic-vfs",
  "thiserror 2.0.19",
@@ -1464,7 +1470,9 @@ dependencies = [
 
 [[package]]
 name = "forensic-vfs"
-version = "0.4.2"
+version = "0.4.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "314802ebfff0aeebf1f01c4f8bd535372e4a560c0039c5fc3df34a5d35df8ab2"
 dependencies = [
  "forensicnomicon-core",
  "state-history-forensic",
@@ -1784,6 +1792,8 @@ checksum = "7f24254aa9a54b5c858eaee2f5bccdb46aaf0e486a595ed5fd8f86ba55232a70"
 [[package]]
 name = "hfsplus-forensic"
 version = "0.2.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3e0c41a6f7d48bc684029b674bdc11e95a125e8339e4725e03d0645c6f0d2d17"
 dependencies = [
  "flate2",
  "forensic-vfs",
@@ -1962,6 +1972,8 @@ checksum = "a6cb138bb79a146c1bd460005623e142ef0181e3d0219cb493e02f7d08a35695"
 [[package]]
 name = "iso9660-forensic"
 version = "0.7.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5e44ae99ec6b459e4942d8f6605cb68673641954f28627e06822c44908e80ef6"
 dependencies = [
  "forensic-vfs",
  "forensicnomicon",
@@ -2464,7 +2476,9 @@ dependencies = [
 
 [[package]]
 name = "ntfs-core"
-version = "0.9.2"
+version = "0.9.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "386649ea68eb50c04fe399cfb2fab621c5717a3f0c5389cfc75c6624a383f3fe"
 dependencies = [
  "bitflags 2.13.1",
  "chrono",
