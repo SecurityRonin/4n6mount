@@ -3104,4 +3104,50 @@ mod tests {
         // Orphans never inject in-place (ino 101/102/103 are routed to $Orphans).
         assert!(!kids.iter().any(|(ino, _)| *ino == deleted_ino(101)));
     }
+
+    // -----------------------------------------------------------------------
+    // ADR 0008 v2 (b): `$Orphans/` is a top-level synthetic directory (not a
+    // `deleted/` subtree), shown only when unplaceable entries exist.
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn orphans_dir_is_top_level_only_when_present() {
+        use crate::inode_map::FUSE_ORPHANS_INO;
+        // With orphans present, `$Orphans` joins the root listing; the flat
+        // `deleted/` directory is gone.
+        let with = root_dir_listing(true);
+        assert!(
+            with.iter()
+                .any(|&(ino, n)| ino == FUSE_ORPHANS_INO && n == "$Orphans"),
+            "root should list $Orphans when orphans exist: {with:?}"
+        );
+        assert!(
+            !with.iter().any(|&(_, n)| n == "deleted"),
+            "the flat deleted/ dir is removed in v2: {with:?}"
+        );
+        // Stable virtual dirs stay.
+        for want in ["ro", "rw", "metadata", "session"] {
+            assert!(
+                with.iter().any(|&(_, n)| n == want),
+                "missing {want}: {with:?}"
+            );
+        }
+        // No orphans -> no $Orphans at the root.
+        let without = root_dir_listing(false);
+        assert!(
+            !without.iter().any(|&(_, n)| n == "$Orphans"),
+            "no $Orphans without orphan entries: {without:?}"
+        );
+    }
+
+    #[test]
+    fn cache_has_orphans_reflects_placement() {
+        let fuse = make_mock_fuse_mode(crate::DeletedMode::Latest);
+        fuse.ensure_deleted_cache();
+        let cache = fuse.deleted_cache.borrow();
+        let entries = cache.as_ref().expect("cache populated");
+        // Mock routes 101/102/103 to $Orphans.
+        assert!(cache_has_orphans(entries));
+        assert!(!cache_has_orphans(&[]));
+    }
 }
