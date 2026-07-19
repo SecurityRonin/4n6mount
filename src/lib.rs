@@ -27,7 +27,7 @@ pub mod mem;
 pub mod engine_fs;
 pub mod types;
 
-pub use engine_fs::{open_image, EngineFs};
+pub use engine_fs::{open_image, open_image_all, EngineFs, MultiPartitionFs};
 pub use types::*;
 
 use std::io;

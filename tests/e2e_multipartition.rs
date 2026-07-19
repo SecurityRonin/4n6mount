@@ -120,8 +120,7 @@ fn e2e_multipartition_surfaces_ntfs() {
     );
     assert!(
         parts.len() >= 2,
-        "a multi-partition disk must surface >= 2 partitions, saw {:?}",
-        part_names
+        "a multi-partition disk must surface >= 2 partitions, saw {part_names:?}"
     );
     for e in &parts {
         assert_eq!(

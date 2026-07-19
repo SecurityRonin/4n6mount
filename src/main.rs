@@ -137,9 +137,11 @@ fn main() {
     // Hand the image to 4n6mount's open path: it peels an outer compression
     // wrapper (evidence.dd.gz -> dd) via archive-core, then the engine decodes
     // any container (E01/VMDK/QCOW2/VHD/VHDX/DMG), enumerates partitions, and
-    // mounts the detected filesystem — failing loud if none is found.
+    // mounts EVERY partition that carries a filesystem — a single-filesystem
+    // image at the root (unchanged), a multi-partition disk multiplexed under
+    // p1/p2/... subdirectories — failing loud if none is found.
     let forensic_fs =
-        forensic_mount::open_image(std::path::Path::new(&image)).unwrap_or_else(|e| {
+        forensic_mount::open_image_all(std::path::Path::new(&image)).unwrap_or_else(|e| {
             eprintln!("Cannot mount {image}: {e}");
             std::process::exit(1);
         });

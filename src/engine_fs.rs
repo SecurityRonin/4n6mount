@@ -19,7 +19,7 @@
 
 use std::collections::HashMap;
 use std::io;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use forensic_vfs::{
     Allocation, DynFs, FileId, MacbTimes, NodeKind, StreamId, TimeStamp, TimeZonePolicy, VfsError,
@@ -89,6 +89,13 @@ impl EngineFs {
             .get(&ino)
             .copied()
             .ok_or_else(|| FsError::NotFound(format!("unknown inode {ino}")))
+    }
+
+    /// The mounted filesystem's kind as a short lowercase tag (e.g. `"ntfs"`,
+    /// `"fat"`) — used to label a partition in a [`MultiPartitionFs`].
+    #[must_use]
+    pub fn fs_kind_str(&self) -> &'static str {
+        self.fs.kind().as_str()
     }
 }
 
@@ -369,6 +376,68 @@ pub fn open_image(path: &Path) -> io::Result<Box<dyn ForensicFs + Send>> {
     Ok(Box::new(EngineFs::new(fs, None)))
 }
 
+/// Open a disk-image evidence file, surfacing **every** partition as a mountable
+/// [`ForensicFs`].
+///
+/// [`open_image`] mounts only the first filesystem the engine finds; on a Windows
+/// GPT disk that is the tiny FAT EFI System Partition, so the NTFS Windows volume
+/// is unreachable. This opens all partitions via `Vfs::open_all`:
+///
+/// * **One** filesystem (a single-partition disk, a bare volume) is returned
+///   directly, mounted at the root — behavior and inode scheme identical to
+///   [`open_image`], so single-filesystem images are unchanged.
+/// * **Several** filesystems are multiplexed under a synthetic root as `p1`,
+///   `p2`, … subdirectories (labelled with the filesystem kind, e.g. `p2-ntfs`)
+///   by a [`MultiPartitionFs`].
+///
+/// Transparently peels an OUTER compression wrapper first (as [`open_image`]),
+/// keeping the spilled temp image alive for the mount's lifetime.
+///
+/// # Errors
+/// Fails loud on a peel decode error, an engine open/decode error, or when no
+/// partition carries a detectable filesystem (`InvalidData`).
+pub fn open_image_all(path: &Path) -> io::Result<Box<dyn ForensicFs + Send>> {
+    // Peel an outer compression wrapper; the spilled temp file must outlive
+    // whatever we return, so it is threaded through to the mounted backend.
+    let (image, tmp): (PathBuf, Option<tempfile::TempPath>) = match try_peel_to_tmp(path)? {
+        Some(nt) => (nt.path().to_path_buf(), Some(nt.into_temp_path())),
+        None => (path.to_path_buf(), None),
+    };
+
+    let evidences = Vfs::new()
+        .open_all(&image)
+        .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e.to_string()))?;
+    let mut fss: Vec<DynFs> = evidences.into_iter().filter_map(|e| e.fs).collect();
+
+    if fss.is_empty() {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!(
+                "no filesystem detected in {} (unsupported container/volume/filesystem, or empty image)",
+                image.display()
+            ),
+        ));
+    }
+
+    // A single filesystem mounts at the root — unchanged UX for single-fs images.
+    if fss.len() == 1 {
+        let fs = fss
+            .pop()
+            .unwrap_or_else(|| unreachable!("len checked == 1"));
+        return Ok(Box::new(EngineFs::new(fs, tmp)));
+    }
+
+    // Multiple filesystems: multiplex them under a synthetic root as p1..pN.
+    let mut parts = Vec::with_capacity(fss.len());
+    let mut labels = Vec::with_capacity(fss.len());
+    for (i, fs) in fss.into_iter().enumerate() {
+        let ef = EngineFs::new(fs, None);
+        labels.push(format!("p{}-{}", i + 1, ef.fs_kind_str()).into_bytes());
+        parts.push(ef);
+    }
+    Ok(Box::new(MultiPartitionFs::new(parts, labels, tmp)))
+}
+
 /// Attempt to peel one outer compression wrapper, spilling the inner image to a
 /// temp file. Returns `None` when `path` is not a compression wrapper (so the
 /// caller opens it directly), and an error only when a genuinely-named wrapper
@@ -418,4 +487,185 @@ fn mount_engine(path: &Path) -> io::Result<DynFs> {
             ),
         )
     })
+}
+
+/// The synthetic-root inode of a [`MultiPartitionFs`].
+const MP_ROOT_INO: u64 = 1;
+
+/// A multiplexer that surfaces each partition of a multi-partition disk image as
+/// a `pN` subdirectory under a synthetic root, so an analyst reaches every
+/// filesystem (e.g. both the FAT EFI System Partition *and* the NTFS Windows
+/// volume of a GPT disk) rather than only the first the engine finds.
+///
+/// Each partition is a mounted [`EngineFs`]; the multiplexer keeps a dense
+/// `(partition, inner inode) -> global inode` map so partition inode spaces stay
+/// disjoint. A `partition << 48` bit-pack would be simpler but overflows the FUSE
+/// mount layer's `ro_ino` (backend `+ 1000`) / `decode_fuse_ino` namespace
+/// `[1000, 10_000_000)`; the dense allocator (the same pattern `EngineFs` uses
+/// for `FileId -> u64`) keeps globals small, so the tree flows through the mount
+/// exactly like a single filesystem.
+pub struct MultiPartitionFs {
+    /// One mounted filesystem per surfaced partition, in disk order. Declared
+    /// before `_tmp` so its open handles drop before the temp image is unlinked
+    /// (correct on Windows).
+    parts: Vec<EngineFs>,
+    /// The `pN-<kind>` label for each partition (parallel to `parts`).
+    labels: Vec<Vec<u8>>,
+    /// Dense `(partition, inner inode) -> global inode` and its inverse.
+    fwd: HashMap<(usize, u64), u64>,
+    rev: HashMap<u64, (usize, u64)>,
+    /// Next dense global inode to hand out (starts above the synthetic root).
+    next: u64,
+    /// A peeled inner image spilled to a temp file, removed when this drops.
+    _tmp: Option<tempfile::TempPath>,
+}
+
+impl MultiPartitionFs {
+    /// Wrap the per-partition filesystems and their labels. `tmp` is the temp
+    /// file backing a peeled image, if any — kept alive for the mount's lifetime.
+    fn new(parts: Vec<EngineFs>, labels: Vec<Vec<u8>>, tmp: Option<tempfile::TempPath>) -> Self {
+        debug_assert_eq!(parts.len(), labels.len());
+        Self {
+            parts,
+            labels,
+            fwd: HashMap::new(),
+            rev: HashMap::new(),
+            next: MP_ROOT_INO + 1,
+            _tmp: tmp,
+        }
+    }
+
+    /// Map a `(partition, inner inode)` pair to a stable dense global inode,
+    /// allocating on first sight.
+    fn assign(&mut self, part: usize, inner: u64) -> u64 {
+        if let Some(&global) = self.fwd.get(&(part, inner)) {
+            return global;
+        }
+        let global = self.next;
+        self.next += 1;
+        self.fwd.insert((part, inner), global);
+        self.rev.insert(global, (part, inner));
+        global
+    }
+
+    /// Resolve a global inode back to its `(partition, inner inode)`, loud on miss.
+    fn resolve(&self, ino: u64) -> FsResult<(usize, u64)> {
+        self.rev
+            .get(&ino)
+            .copied()
+            .ok_or_else(|| FsError::NotFound(format!("unknown inode {ino}")))
+    }
+
+    /// Resolve a non-root inode for a byte-producing op, rejecting the synthetic
+    /// root (it is a directory, not a file).
+    fn dispatch_file(&self, ino: u64) -> FsResult<(usize, u64)> {
+        if ino == MP_ROOT_INO {
+            return Err(FsError::Other(
+                "the multi-partition root is a directory, not a file".to_string(),
+            ));
+        }
+        self.resolve(ino)
+    }
+}
+
+/// Metadata for the synthetic multi-partition root: a read-only directory.
+fn synthetic_root_metadata() -> FsMetadata {
+    FsMetadata {
+        ino: MP_ROOT_INO,
+        file_type: FsFileType::Directory,
+        mode: 0o040_555,
+        uid: 0,
+        gid: 0,
+        size: 0,
+        links_count: 2,
+        atime: FsTimestamp::default(),
+        mtime: FsTimestamp::default(),
+        ctime: FsTimestamp::default(),
+        crtime: FsTimestamp::default(),
+        allocated: true,
+    }
+}
+
+impl ForensicFs for MultiPartitionFs {
+    fn root_ino(&self) -> u64 {
+        MP_ROOT_INO
+    }
+
+    fn read_dir(&mut self, ino: u64) -> FsResult<Vec<FsDirEntry>> {
+        if ino == MP_ROOT_INO {
+            let mut out = Vec::with_capacity(self.parts.len());
+            for idx in 0..self.parts.len() {
+                let inner_root = self.parts[idx].root_ino();
+                let inode = self.assign(idx, inner_root);
+                out.push(FsDirEntry {
+                    inode,
+                    name: self.labels[idx].clone(),
+                    file_type: FsFileType::Directory,
+                });
+            }
+            return Ok(out);
+        }
+        let (part, inner) = self.resolve(ino)?;
+        let entries = self.parts[part].read_dir(inner)?;
+        let mut out = Vec::with_capacity(entries.len());
+        for e in entries {
+            let inode = self.assign(part, e.inode);
+            out.push(FsDirEntry {
+                inode,
+                name: e.name,
+                file_type: e.file_type,
+            });
+        }
+        Ok(out)
+    }
+
+    fn lookup(&mut self, parent_ino: u64, name: &[u8]) -> FsResult<Option<u64>> {
+        if parent_ino == MP_ROOT_INO {
+            if name == b"." || name == b".." {
+                return Ok(Some(MP_ROOT_INO));
+            }
+            for idx in 0..self.parts.len() {
+                if self.labels[idx].as_slice() == name {
+                    let inner_root = self.parts[idx].root_ino();
+                    return Ok(Some(self.assign(idx, inner_root)));
+                }
+            }
+            return Ok(None);
+        }
+        let (part, inner) = self.resolve(parent_ino)?;
+        match self.parts[part].lookup(inner, name)? {
+            Some(child) => Ok(Some(self.assign(part, child))),
+            None => Ok(None),
+        }
+    }
+
+    fn metadata(&mut self, ino: u64) -> FsResult<FsMetadata> {
+        if ino == MP_ROOT_INO {
+            return Ok(synthetic_root_metadata());
+        }
+        let (part, inner) = self.resolve(ino)?;
+        let mut meta = self.parts[part].metadata(inner)?;
+        // Re-stamp the metadata's inode with the global one the caller passed.
+        meta.ino = ino;
+        Ok(meta)
+    }
+
+    fn read_file(&mut self, ino: u64) -> FsResult<Vec<u8>> {
+        let (part, inner) = self.dispatch_file(ino)?;
+        self.parts[part].read_file(inner)
+    }
+
+    fn read_file_range(&mut self, ino: u64, offset: u64, len: u64) -> FsResult<Vec<u8>> {
+        let (part, inner) = self.dispatch_file(ino)?;
+        self.parts[part].read_file_range(inner, offset, len)
+    }
+
+    fn read_link(&mut self, ino: u64) -> FsResult<Vec<u8>> {
+        let (part, inner) = self.dispatch_file(ino)?;
+        self.parts[part].read_link(inner)
+    }
+
+    fn block_size(&self) -> u64 {
+        self.parts.first().map_or(4096, ForensicFs::block_size)
+    }
 }
