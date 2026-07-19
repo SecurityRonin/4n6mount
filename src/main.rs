@@ -314,6 +314,24 @@ mod tests {
     }
 
     #[test]
+    fn parse_deleted_mode_defaults_to_latest() {
+        let cli = Cli::parse_from(["4n6mount", "image.dd", "/mnt"]);
+        assert_eq!(cli.deleted, forensic_mount::DeletedMode::Latest);
+    }
+
+    #[test]
+    fn parse_deleted_mode_all() {
+        let cli = Cli::parse_from(["4n6mount", "image.dd", "/mnt", "--deleted", "all"]);
+        assert_eq!(cli.deleted, forensic_mount::DeletedMode::All);
+    }
+
+    #[test]
+    fn parse_deleted_mode_off() {
+        let cli = Cli::parse_from(["4n6mount", "image.dd", "/mnt", "--deleted", "off"]);
+        assert_eq!(cli.deleted, forensic_mount::DeletedMode::Off);
+    }
+
+    #[test]
     fn parse_all_options() {
         let cli = Cli::parse_from([
             "4n6mount",
