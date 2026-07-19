@@ -2993,4 +2993,39 @@ mod tests {
             .iter()
             .any(|r| r["name"] == "gone.txt" && r["status"] == "unreadable"));
     }
+
+    // -----------------------------------------------------------------------
+    // ADR 0008 v2 (a): in-place recovered-deleted entries render in the main
+    // navigable tree at their recovered parent, under their real name.
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn in_place_children_injected_under_parent() {
+        let fuse = make_mock_fuse_mode(crate::DeletedMode::Latest);
+        fuse.ensure_deleted_cache();
+        let cache = fuse.deleted_cache.borrow();
+        let entries = cache.as_ref().expect("cache populated");
+        let kids = deleted_in_place_children(entries, 2);
+        // report.txt (ino 100, newest) and gone.txt (ino 104) are the in-place
+        // deletes under the live root (parent ino 2); orphans are excluded.
+        let names: Vec<&str> = kids.iter().map(|(_, n)| n.as_str()).collect();
+        assert!(names.contains(&"report.txt"), "got {names:?}");
+        assert!(names.contains(&"gone.txt"), "got {names:?}");
+        assert_eq!(
+            kids.len(),
+            2,
+            "only the two in-place deletes under parent 2"
+        );
+        // Real recovered name — no `(deleted)` decoration.
+        assert!(
+            !names.iter().any(|n| n.contains("(deleted)")),
+            "got {names:?}"
+        );
+        // Child inode is the deleted-namespace encoding, so getattr/read resolve it.
+        assert!(kids.iter().any(|(ino, _)| *ino == deleted_ino(100)));
+        // A directory with no recovered deleted children gets nothing injected.
+        assert!(deleted_in_place_children(entries, 11).is_empty());
+        // Orphans never inject in-place (ino 101/102/103 are routed to $Orphans).
+        assert!(!kids.iter().any(|(ino, _)| *ino == deleted_ino(101)));
+    }
 }
