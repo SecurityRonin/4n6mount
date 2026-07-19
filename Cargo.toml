@@ -38,10 +38,7 @@ clap = { version = "4", features = ["derive"] }
 forensic-vfs-engine = { version = "0.1", path = "../forensic-vfs-engine" }
 # The `FileSystem` navigation contract + its `Fs*` value types. Registry version
 # (not a path dep) so it unifies with the copy the engine links — a path dep
-# would compile a second, incompatible `DynFs`/`FileId`. The `[patch.crates-io]`
-# below redirects it to the local checkout so both this crate and the engine see
-# the `deleted_nodes()` surface during development (lead removes the patch at
-# publish time).
+# would compile a second, incompatible `DynFs`/`FileId`.
 forensic-vfs = "0.4"
 # Archive-layer reader: transparently peels a gzip/bzip2/xz compression wrapper
 # (evidence.dd.gz -> dd) before the engine opens the inner image.
@@ -65,6 +62,9 @@ libc = "0.2"
 [dev-dependencies]
 # The peel_open integration test gzips a fixture to prove the archive-layer peel.
 flate2 = "1"
+# The e2e_archive_read test drives the SAME archive reader the mount peels
+# evidence with (`archive_core::Archive`) against a real catalog .zip.
+archive-core = { version = "0.1.0", path = "../archive-forensic/core" }
 
 [target.'cfg(unix)'.dependencies]
 fuser = "0.15"
@@ -77,11 +77,6 @@ dokan = "0.3"
 # Must match the widestring version dokan re-exports in its trait signatures
 # (dokan 0.3.1 uses widestring 0.4); a 1.x here is a distinct, incompatible type.
 widestring = "0.4"
-
-# Post-cascade (2026-07): the dev [patch.crates-io] bridges to local reader
-# checkouts are removed — forensic-vfs 0.4.3 (with deleted_nodes()), ntfs-core
-# 0.9.3, and the fs readers are all published on forensic-vfs 0.4, so the whole
-# engine graph now resolves from the registry.
 
 [lints.rust]
 unsafe_code = "forbid"

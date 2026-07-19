@@ -114,3 +114,23 @@ self-licensed fixtures are committed with their md5 below.
 | File | Bytes | MD5 |
 |---|---|---|
 | `aff4-logical.aff4` | 863 | `8f9fd38addc5770b42e60f20af8883b8` |
+
+## Env-gated corpora (not committed)
+
+### `FN_E2E_ARCHIVE_ZIP` — real `.zip` for `tests/e2e_archive_read.rs`
+
+- **What:** any real `.zip` archive. The on-demand e2e reads it through the same
+  archive reader the mount peels evidence with (`archive_core::Archive`), picks
+  the file member at the 66% position, and asserts its content magic matches its
+  extension — advancing to the next member when a type can't be determined.
+- **Reference `.zip` (fleet catalog):** DFIR Madness "Stolen Szechuan Sauce"
+  Case-001 network capture — `case001-pcap.zip` (holds `case001.pcap`, a 197 MB
+  pcapng, magic `0a 0d 0d 0a`). Source + hotlink + md5 live in the fleet catalog
+  (`ronin-issen/docs/test-data-catalog.md` §A3); the large `.zip`s are gitignored
+  and downloaded manually, so they are documented, not committed.
+- **Run:**
+  ```sh
+  FN_E2E_ARCHIVE_ZIP=~/src/issen/tests/data/dfirmadness-szechuan-sauce/case001-pcap.zip \
+    cargo test --test e2e_archive_read -- --nocapture
+  ```
+  Skips cleanly when the env var is unset or the file is absent.
