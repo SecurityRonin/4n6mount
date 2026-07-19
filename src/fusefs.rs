@@ -323,37 +323,50 @@ impl ForensicFuseFs {
         };
         drop(fs);
 
-        // Build timeline.jsonl
-        let mut fs = self.fs.borrow_mut();
-        let timeline_jsonl = match fs.timeline() {
-            Ok(events) => {
-                let mut buf = Vec::new();
-                for event in &events {
-                    let event_type = match event.event_type {
-                        FsEventType::Created => "Created",
-                        FsEventType::Modified => "Modified",
-                        FsEventType::Accessed => "Accessed",
-                        FsEventType::Changed => "Changed",
-                        FsEventType::Deleted => "Deleted",
-                        FsEventType::Mounted => "Mounted",
-                    };
-                    let line = serde_json::json!({
-                        "timestamp_secs": event.timestamp.seconds,
-                        "timestamp_nsecs": event.timestamp.nanoseconds,
-                        "event_type": event_type,
-                        "inode": event.inode,
-                        "size": event.size,
-                        "uid": event.uid,
-                        "gid": event.gid,
-                    });
-                    let line_str = serde_json::to_string(&line).unwrap_or_default();
-                    buf.extend_from_slice(line_str.as_bytes());
-                    buf.push(b'\n');
+        // Build timeline.jsonl: filesystem events first, then one row per
+        // recovered deleted instance (grep a path/name = every version of it).
+        let mut timeline_jsonl = {
+            let mut fs = self.fs.borrow_mut();
+            match fs.timeline() {
+                Ok(events) => {
+                    let mut buf = Vec::new();
+                    for event in &events {
+                        let event_type = match event.event_type {
+                            FsEventType::Created => "Created",
+                            FsEventType::Modified => "Modified",
+                            FsEventType::Accessed => "Accessed",
+                            FsEventType::Changed => "Changed",
+                            FsEventType::Deleted => "Deleted",
+                            FsEventType::Mounted => "Mounted",
+                        };
+                        let line = serde_json::json!({
+                            "timestamp_secs": event.timestamp.seconds,
+                            "timestamp_nsecs": event.timestamp.nanoseconds,
+                            "event_type": event_type,
+                            "inode": event.inode,
+                            "size": event.size,
+                            "uid": event.uid,
+                            "gid": event.gid,
+                        });
+                        let line_str = serde_json::to_string(&line).unwrap_or_default();
+                        buf.extend_from_slice(line_str.as_bytes());
+                        buf.push(b'\n');
+                    }
+                    buf
                 }
-                buf
+                Err(_) => Vec::new(),
             }
-            Err(_) => Vec::new(),
         };
+
+        // Deleted-instance rows derived from the same deleted_nodes() data — one
+        // per instance, so every version of a same-named deleted file appears.
+        self.ensure_deleted_cache();
+        if let Some(entries) = self.deleted_cache.borrow().as_ref() {
+            for e in entries {
+                timeline_jsonl.extend_from_slice(deleted_timeline_row(e).as_bytes());
+                timeline_jsonl.push(b'\n');
+            }
+        }
 
         *self.metadata_cache.borrow_mut() = Some(MetadataCache {
             superblock_json,
@@ -672,6 +685,38 @@ fn civil_from_days(z: i64) -> (i64, u32, u32) {
     let d = (doy - (153 * mp + 2) / 5 + 1) as u32; // [1, 31]
     let m = if mp < 10 { mp + 3 } else { mp - 9 } as u32; // [1, 12]
     (if m <= 2 { y + 1 } else { y }, m, d)
+}
+
+/// One `timeline.jsonl` row for a recovered deleted instance. Emitting one row
+/// per instance makes the timeline an all-versions event list: grep a name or
+/// path and every deleted version of it appears. `placement` marks in-place vs
+/// `$Orphans`; `status` says whether the content was recoverable.
+fn deleted_timeline_row(e: &DeletedEntry) -> String {
+    let path = if e.orphan {
+        format!("deleted/$Orphans/{}", e.name)
+    } else {
+        format!("deleted/{}", e.name)
+    };
+    let allocation = match e.allocation {
+        FsAllocation::Deleted => "deleted",
+        FsAllocation::Orphan => "orphan",
+    };
+    let row = serde_json::json!({
+        "path": path,
+        "name": e.real_name,
+        "parent_ino": e.parent_ino,
+        "macb": {
+            "modified": e.macb.modified.seconds,
+            "accessed": e.macb.accessed.seconds,
+            "changed": e.macb.changed.seconds,
+            "born": e.macb.born.seconds,
+        },
+        "record_id": e.record_id,
+        "allocation": allocation,
+        "status": if e.readable { "recovered" } else { "unreadable" },
+        "placement": if e.orphan { "orphan" } else { "in-place" },
+    });
+    serde_json::to_string(&row).unwrap_or_default()
 }
 
 impl Filesystem for ForensicFuseFs {
