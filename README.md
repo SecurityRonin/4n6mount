@@ -250,6 +250,14 @@ You get ro/, rw/, deleted/, journal/, metadata/, session management, and evidenc
 - **208 library tests** (more with the `memory` feature) across FUSE callbacks, inode mapping, session, filter, format detection, and every filesystem/archive/logical-image/memory backend
 - Each format validated against **real-world data with an independent oracle** (The Sleuth Kit, the OS's own driver, or Volatility) — not a self-encoded round-trip
 - Mock-based FUSE testing with `MockForensicFs`; CLI parsing tests for all argument combinations
+- **On-demand archive-read e2e** (`tests/e2e_archive_read.rs`): reads a real `.zip` through the same archive reader the mount peels evidence with (`archive_core::Archive`), picks the member at the 66% position, and asserts its content magic matches its extension (advancing past members whose type can't be determined). Synthetic unit tests run in CI; the real-data leg is env-gated:
+
+  ```sh
+  FN_E2E_ARCHIVE_ZIP=~/src/issen/tests/data/dfirmadness-szechuan-sauce/case001-pcap.zip \
+    cargo test --test e2e_archive_read -- --nocapture
+  ```
+
+  It skips cleanly when `FN_E2E_ARCHIVE_ZIP` is unset or the file is absent.
 
 ## Part of the SecurityRonin forensic suite
 
