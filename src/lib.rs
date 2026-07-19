@@ -286,4 +286,74 @@ mod memory_tests {
 
         std::fs::remove_dir_all(&dir).ok();
     }
+
+    /// ADR-0011: a memory dump wrapped in an archive (`.zip`) or nested
+    /// compression (`.zip.gz`) must read back the SAME physical pages as the bare
+    /// raw dump — proving the resolve_to_source (peel) -> DynSource->DumpReader
+    /// adapt -> open_source_with_raw_fallback chain in `open_memory_provider`.
+    /// A headerless raw dump (Raw format, probe score 5) also exercises the
+    /// raw-fallback below-threshold path the resolver hands memf.
+    #[test]
+    fn wrapped_memory_dump_reads_same_pages_as_raw() {
+        use memf_format::PhysicalMemoryProvider;
+        use std::io::Write as _;
+
+        // Deterministic headerless raw dump content.
+        let page: Vec<u8> = (0..4096u32).map(|i| (i % 251) as u8).collect();
+
+        let dir = std::env::temp_dir().join(format!("4n6mem_wrap_{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+
+        // (1) raw baseline
+        let raw_path = dir.join("memory.raw");
+        std::fs::write(&raw_path, &page).unwrap();
+
+        // (2) .zip-wrapped, Stored so archive-core reads the member in place
+        let mut zip_bytes = Vec::new();
+        {
+            let mut zw = zip::ZipWriter::new(std::io::Cursor::new(&mut zip_bytes));
+            let opts = zip::write::SimpleFileOptions::default()
+                .compression_method(zip::CompressionMethod::Stored);
+            zw.start_file("memory.raw", opts).unwrap();
+            zw.write_all(&page).unwrap();
+            zw.finish().unwrap();
+        }
+        let zip_path = dir.join("memory.zip");
+        std::fs::write(&zip_path, &zip_bytes).unwrap();
+
+        // (3) nested .zip.gz (gzip over the zip bytes)
+        let gz_path = dir.join("memory.zip.gz");
+        {
+            let mut enc = flate2::write::GzEncoder::new(
+                std::fs::File::create(&gz_path).unwrap(),
+                flate2::Compression::default(),
+            );
+            enc.write_all(&zip_bytes).unwrap();
+            enc.finish().unwrap();
+        }
+
+        let read_first_page = |p: &std::path::Path| -> Vec<u8> {
+            let provider = open_memory_provider(p).expect("open wrapped/raw memory provider");
+            assert_eq!(provider.format_name(), "Raw");
+            assert_eq!(provider.total_size(), page.len() as u64);
+            let mut got = vec![0u8; page.len()];
+            let n = provider.read_phys(0, &mut got).unwrap();
+            got.truncate(n);
+            got
+        };
+
+        assert_eq!(read_first_page(&raw_path), page, "raw baseline");
+        assert_eq!(
+            read_first_page(&zip_path),
+            page,
+            ".zip-wrapped dump reads the same pages as raw"
+        );
+        assert_eq!(
+            read_first_page(&gz_path),
+            page,
+            "nested .zip.gz dump reads the same pages as raw"
+        );
+
+        std::fs::remove_dir_all(&dir).ok();
+    }
 }

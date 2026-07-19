@@ -29,7 +29,7 @@ required-features = ["memory"]
 # reader is compiled in, so there are no per-format features to forward. Only
 # the memory-dump mount (memf) stays opt-in — it pulls a large analysis stack.
 default = []
-memory = ["dep:memf-format", "dep:memf-core", "dep:memf-session", "dep:memf-symbols", "dep:memf-windows", "dep:memf-linux"]
+memory = ["dep:memf-format", "dep:memf-core", "dep:memf-session", "dep:memf-symbols", "dep:memf-windows", "dep:memf-linux", "dep:forensic-vfs-resolver"]
 
 [dependencies]
 clap = { version = "4", features = ["derive"] }
@@ -40,6 +40,12 @@ forensic-vfs-engine = { version = "0.1", path = "../forensic-vfs-engine" }
 # (not a path dep) so it unifies with the copy the engine links — a path dep
 # would compile a second, incompatible `DynFs`/`FileId`.
 forensic-vfs = "0.4"
+# The generic layer resolver's `resolve_to_source()` (ADR 0011) — peels a wrapped
+# memory dump (memory.zip / memory.dd.gz / dump.7z) down to its raw byte edge
+# before memf reads it. Only the memory mount needs it; already in the graph via
+# the engine, so this is a zero-cost direct handle. Registry version so it unifies
+# with the engine's copy (see the [patch] bridge below while Phase 1 is unpublished).
+forensic-vfs-resolver = { version = "0.1", optional = true }
 # Archive-layer reader: transparently peels a gzip/bzip2/xz compression wrapper
 # (evidence.dd.gz -> dd) before the engine opens the inner image.
 archive-core = { version = "0.1.0", path = "../archive-forensic/core" }
@@ -65,6 +71,9 @@ flate2 = "1"
 # The e2e_archive_read test drives the SAME archive reader the mount peels
 # evidence with (`archive_core::Archive`) against a real catalog .zip.
 archive-core = { version = "0.1.0", path = "../archive-forensic/core" }
+# The ADR-0011 memory-unarchive test wraps a synthetic dump in a real .zip to
+# prove the resolve_to_source -> adapt -> open_source chain reads the same pages.
+zip = { version = "2", default-features = false, features = ["deflate"] }
 
 [target.'cfg(unix)'.dependencies]
 fuser = "0.15"
@@ -95,3 +104,14 @@ cast_sign_loss = "allow"
 too_many_lines = "allow"
 needless_pass_by_value = "allow"
 similar_names = "allow"
+
+# --- ADR-0011 dev-only bridge (REMOVE once Phases 1+2 publish) --------------
+# resolve_to_source() lives on the unpublished forensic-vfs `feat/resolve-to-source`
+# branch. Bridge only the RESOLVER to a detached worktree of that branch whose
+# Cargo.toml is repointed at the published core 0.4.3 — the whole fleet (readers,
+# engine) requires ^0.4.3, so everyone keeps sharing that one core; only the
+# resolver crate is swapped for the branch copy that carries resolve_to_source.
+# open_source_with_raw_fallback() (memf-format) ships via the existing memf-* path
+# deps (../memory-forensic, on feat/open-source). Reverted once both publish.
+[patch.crates-io]
+forensic-vfs-resolver = { path = "../forensic-vfs-adr11/crates/resolver" }
