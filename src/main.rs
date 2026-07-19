@@ -20,6 +20,12 @@ struct Cli {
     #[arg(long)]
     fs: Option<String>,
 
+    /// How to surface recovered deleted files under `deleted/`:
+    /// `latest` (newest per name in place, older to $Orphans),
+    /// `all` (every instance in $Orphans), or `off`.
+    #[arg(long, value_enum, default_value_t = forensic_mount::DeletedMode::Latest)]
+    deleted: forensic_mount::DeletedMode,
+
     /// Symbol file (ISF JSON or PDB) for memory-dump analysis. Optional for a
     /// Windows crash dump whose header carries CR3 + kernel list heads.
     #[arg(long)]
@@ -161,6 +167,7 @@ fn main() {
         daemon: cli.daemon,
         fs_name: "4n6mount".to_string(),
         layout: forensic_mount::MountLayout::DiskOverlay,
+        deleted_mode: cli.deleted,
     };
 
     eprintln!("Mounting {image} at {mountpoint}");
@@ -192,6 +199,8 @@ fn route_memory_mount(image: &str, mountpoint: &str, symbols: Option<&str>, daem
         daemon,
         fs_name: "4n6mount-memory".to_string(),
         layout: forensic_mount::MountLayout::Raw,
+        // A memory dump exposes no deleted-file recovery surface.
+        deleted_mode: forensic_mount::DeletedMode::Off,
     };
     eprintln!("Mounting memory dump {image} at {mountpoint}");
     forensic_mount::mount(fs, std::path::Path::new(mountpoint), None, &options).unwrap_or_else(

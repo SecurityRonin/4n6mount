@@ -120,6 +120,24 @@ pub enum MountLayout {
     Raw,
 }
 
+/// How the `deleted/` view surfaces recovered deleted files.
+///
+/// A deleted file is placed **in-place** (under its recovered parent, at its
+/// real name) when its parent is known and no live sibling holds the name;
+/// otherwise it is routed to a synthetic `$Orphans` bucket (ADR 0008).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, clap::ValueEnum)]
+pub enum DeletedMode {
+    /// Newest deleted instance per (parent, name) rendered in-place; older
+    /// same-name instances routed to `$Orphans`. The default.
+    #[default]
+    Latest,
+    /// Every deleted instance rendered under `$Orphans`, disambiguated by
+    /// recovered mtime and record id.
+    All,
+    /// Do not surface deleted files at all.
+    Off,
+}
+
 /// Mount options for the FUSE filesystem.
 ///
 /// Platform-agnostic configuration consumed by both the Unix (fuser)
@@ -129,6 +147,8 @@ pub struct MountOptions {
     pub daemon: bool,
     pub fs_name: String,
     pub layout: MountLayout,
+    /// How the `deleted/` view is populated.
+    pub deleted_mode: DeletedMode,
 }
 
 impl Default for MountOptions {
@@ -138,6 +158,7 @@ impl Default for MountOptions {
             daemon: false,
             fs_name: "4n6mount".to_string(),
             layout: MountLayout::DiskOverlay,
+            deleted_mode: DeletedMode::default(),
         }
     }
 }

@@ -76,6 +76,7 @@ mod tests {
             daemon: true,
             fs_name: "ext4fs".to_string(),
             layout: crate::MountLayout::DiskOverlay,
+            deleted_mode: crate::DeletedMode::default(),
         };
         assert!(opts.read_only);
         assert!(opts.daemon);
