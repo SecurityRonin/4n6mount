@@ -3283,4 +3283,29 @@ mod tests {
         // Unknown attribute -> None (getxattr replies ENODATA).
         assert!(deleted_xattr_value(a, "user.4n6.nope").is_none());
     }
+
+    // -----------------------------------------------------------------------
+    // ADR 0008 v2 (d): recovered-deleted entries are COW-writable like live
+    // files — a write copies up the recovered bytes, leaving the base untouched.
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn deleted_cow_base_yields_recovered_bytes() {
+        let fuse = make_mock_fuse_mode(crate::DeletedMode::Latest);
+        fuse.ensure_deleted_cache();
+        let cache = fuse.deleted_cache.borrow();
+        let entries = cache.as_ref().expect("cache populated");
+
+        // A readable in-place delete (ino 100) copies up from its recovered
+        // bytes — the write path is not forced read-only.
+        let base = deleted_cow_base(entries, 100).expect("readable -> copy-up base");
+        assert_eq!(base, vec![0xAB; 100]);
+
+        // An unreadable recovered entry (ino 104, gone.txt) has no base to copy
+        // up — the write must fail loud, never fabricate an empty file.
+        assert!(deleted_cow_base(entries, 104).is_none());
+
+        // Unknown inode -> no base.
+        assert!(deleted_cow_base(entries, 999).is_none());
+    }
 }
