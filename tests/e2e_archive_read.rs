@@ -38,9 +38,80 @@ pub enum Verdict {
 
 /// Verify that `bytes` are consistent with the extension of `name`.
 ///
-/// RED stub — the GREEN step implements the magic-vs-extension logic.
-pub fn content_matches_extension(_name: &str, _bytes: &[u8]) -> Verdict {
-    unimplemented!("GREEN step implements the content-vs-extension verifier")
+/// Returns [`Verdict::Undetermined`] when the name has no extension, an unknown
+/// extension, or an extension with no reliable content signature (e.g. `.txt`,
+/// `.csv`, `.dat`); [`Verdict::Match`]/[`Verdict::Mismatch`] otherwise.
+pub fn content_matches_extension(name: &str, bytes: &[u8]) -> Verdict {
+    let Some(ext) = extension(name) else {
+        return Verdict::Undetermined;
+    };
+    let Some(magics) = expected_magics(&ext) else {
+        return Verdict::Undetermined;
+    };
+    // Every signature anchors at offset 0; `starts_with` is length-safe (a head
+    // shorter than the magic yields false → Mismatch, never a panic).
+    if magics.iter().any(|m| bytes.starts_with(m)) {
+        Verdict::Match
+    } else {
+        Verdict::Mismatch
+    }
+}
+
+/// The lowercased final extension of `name`'s last path component, or `None`
+/// when there is none (a bare name, a dotfile like `.bashrc`, or a trailing dot).
+fn extension(name: &str) -> Option<String> {
+    let base = name.rsplit(['/', '\\']).next().unwrap_or(name);
+    let (stem, ext) = base.rsplit_once('.')?;
+    if stem.is_empty() || ext.is_empty() {
+        return None;
+    }
+    Some(ext.to_ascii_lowercase())
+}
+
+/// The content-magic signatures accepted for a known extension, or `None` when
+/// the extension carries no reliable signature (textual/opaque formats). All
+/// signatures anchor at offset 0.
+fn expected_magics(ext: &str) -> Option<&'static [&'static [u8]]> {
+    Some(match ext {
+        "png" => &[&[0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A]],
+        "jpg" | "jpeg" => &[&[0xFF, 0xD8, 0xFF]],
+        "gif" => &[b"GIF87a", b"GIF89a"],
+        "bmp" => &[b"BM"],
+        "pdf" => &[b"%PDF"],
+        "gz" | "tgz" | "gzip" => &[&[0x1F, 0x8B]],
+        "bz2" | "tbz2" => &[b"BZh"],
+        "xz" => &[&[0xFD, b'7', b'z', b'X', b'Z', 0x00]],
+        "zip" | "clbx" | "docx" | "xlsx" | "pptx" | "jar" | "apk" => {
+            &[b"PK\x03\x04", b"PK\x05\x06", b"PK\x07\x08"]
+        }
+        "7z" => &[&[0x37, 0x7A, 0xBC, 0xAF, 0x27, 0x1C]],
+        "rar" => &[b"Rar!\x1A\x07"],
+        "cab" => &[b"MSCF"],
+        "exe" | "dll" | "sys" | "scr" | "ocx" | "cpl" => &[b"MZ"],
+        "elf" | "so" => &[&[0x7F, b'E', b'L', b'F']],
+        "class" => &[&[0xCA, 0xFE, 0xBA, 0xBE]],
+        "evtx" => &[b"ElfFile\x00"],
+        "evt" => &[&[0x30, 0x00, 0x00, 0x00, 0x4C, 0x66, 0x4C, 0x65]],
+        "sqlite" | "sqlite3" | "db" => &[b"SQLite format 3\x00"],
+        "hve" | "regf" => &[b"regf"],
+        "lnk" => &[&[0x4C, 0x00, 0x00, 0x00, 0x01, 0x14, 0x02, 0x00]],
+        "ico" => &[&[0x00, 0x00, 0x01, 0x00]],
+        "cur" => &[&[0x00, 0x00, 0x02, 0x00]],
+        "wav" | "avi" => &[b"RIFF"],
+        "pcap" => &[
+            &[0xD4, 0xC3, 0xB2, 0xA1], // classic pcap (little-endian)
+            &[0xA1, 0xB2, 0xC3, 0xD4], // classic pcap (big-endian)
+            &[0x0A, 0x0D, 0x0D, 0x0A], // pcapng section header block
+        ],
+        "pcapng" => &[&[0x0A, 0x0D, 0x0D, 0x0A]],
+        "xml" => &[
+            b"<?xml",                  // ascii / utf-8
+            b"\xEF\xBB\xBF<?xml",      // utf-8 BOM
+            &[0xFF, 0xFE, b'<', 0x00], // utf-16 LE BOM + '<'
+            &[0xFE, 0xFF, 0x00, b'<'], // utf-16 BE BOM + '<'
+        ],
+        _ => return None,
+    })
 }
 
 // ---------------------------------------------------------------------------
