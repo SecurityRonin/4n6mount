@@ -1,0 +1,6 @@
+# Raw disk images and extracted working copies are large and ephemeral — they
+# live under /tmp per the fleet test-data provenance standard and are NEVER
+# committed. Only the harness, the small measured/score JSON, and RESULTS.md are.
+*.img
+*.dat
+stage-*/
