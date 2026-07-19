@@ -1,0 +1,66 @@
+{
+  "fs": "fat",
+  "chunk": 512,
+  "files": {
+    "short83": {
+      "id": "short83",
+      "relpath": "AB.TXT",
+      "name": "AB.TXT",
+      "size": 512,
+      "class": "tiny-short-8.3",
+      "nonce": "N0short83aaaaaaa",
+      "sha256": "206b9b3672c1f3e72a0f89e5fd4506e71438d589c026965d256e18f4c469771a",
+      "n_chunks": 1
+    },
+    "lfn": {
+      "id": "lfn",
+      "relpath": "evidence_report_final_copy.txt",
+      "name": "evidence_report_final_copy.txt",
+      "size": 512,
+      "class": "tiny-longname-LFN",
+      "nonce": "N1lfnbbbbbbbbbbb",
+      "sha256": "156ae8f3177bec6428b31f0d67d378c5518ec9f0660aa316329434f36252a9d8",
+      "n_chunks": 1
+    },
+    "unicode": {
+      "id": "unicode",
+      "relpath": "秘密資料.txt",
+      "name": "秘密資料.txt",
+      "size": 512,
+      "class": "tiny-unicode-name",
+      "nonce": "N2unicodeccccccc",
+      "sha256": "acc8f012fd22ee998baeea186360afe3189efb7290656d27e40cacd3e3c65a4f",
+      "n_chunks": 1
+    },
+    "deep": {
+      "id": "deep",
+      "relpath": "d1/d2/d3/d4/nested_secret.txt",
+      "name": "nested_secret.txt",
+      "size": 512,
+      "class": "tiny-deep-path",
+      "nonce": "N3deepdddddddddd",
+      "sha256": "a1455c7c783acec27254dc00c74d790b91e03031c8e86a2191214110f7121d5e",
+      "n_chunks": 1
+    },
+    "contig": {
+      "id": "contig",
+      "relpath": "big_contiguous_blob.bin",
+      "name": "big_contiguous_blob.bin",
+      "size": 131072,
+      "class": "large-contiguous",
+      "nonce": "N4contigeeeeeeee",
+      "sha256": "48597507375d4c5b4db01f9531ea50face397689acbe0791193f829cd56bdd77",
+      "n_chunks": 256
+    },
+    "frag": {
+      "id": "frag",
+      "relpath": "fragmented_blob.bin",
+      "name": "fragmented_blob.bin",
+      "size": 131072,
+      "class": "large-fragmented",
+      "nonce": "N5fragffffffffff",
+      "sha256": "e43c5a16688748c5bc7fa9431b6d1d9a1bb5d05db8a0e6520c8d6d4c8c1a535d",
+      "n_chunks": 256
+    }
+  }
+}

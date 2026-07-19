@@ -4,3 +4,4 @@
 *.img
 *.dat
 stage-*/
+__pycache__/

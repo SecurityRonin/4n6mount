@@ -381,6 +381,12 @@ The experiment that would upgrade §2.2 from descriptive organization to a valid
 
 **Out of scope for the protocol's first iteration:** FTL-level effects (requires hardware instrumentation), encrypted-volume arms (adds a key-management dimension), and the tool-presentation cells of §4.5 (a separate versioned-tool bench).
 
+### 7.1 Initial results (partial — macOS filesystems run, Linux pending)
+
+A first iteration of this protocol has been executed and pre-registered; the harness, the three models' committed predictions, and the measured data live under [`experiment/`](experiment/) ([`experiment/RESULTS.md`](experiment/RESULTS.md)). Only the four filesystems that `mkfs` natively on the macOS host were run — **FAT32, exFAT, HFS+, APFS** — as real filesystems in raw disk images, deleted, churned, and snapshotted at T0/T1/T2, with residue measured by The Sleuth Kit 4.12.1 as an independent oracle (L1 name, L2 map) plus a filesystem-agnostic content-marker byte-scan (L3). The Linux families (ext4, XFS, Btrfs, F2FS) require a Linux runner and are deferred with the identical protocol documented in `experiment/RESULTS.md`; they were not synthesized.
+
+On the **66 measured cells** at T1 (immediate post-delete), the two-axis model scored **52/66 = 78.8% [67.0, 87.9]** (Clopper-Pearson exact 95% CI) and both baselines tied at **49/66 = 74.2% [62.0, 84.2]**. The two-axis model is directionally higher — its edge concentrated in L2 (fragmented-file map loss) and L1 (the FAT 8.3 tombstone), the Axis-B and update-strategy effects the baselines are blind to — but its interval **overlaps** both baselines'. By this section's own criterion, that is **not** a validated-predictor result: on this small, macOS-only corpus **§2.2 stands as descriptive organization.** The corpus does corroborate the survey's descriptive core directly — the layers were observed failing out of lockstep (FAT fragmented file: name full, map partial, content intact; HFS+: name and map gone from the live tree, content intact). The Axis-A-only and Carrier baselines produced identical predictions on these four formats and diverge only on cells this iteration does not contain (post-reclaim out-of-place volumes, snapshot-pinned residue) — so the Linux and COW-with-snapshot arms are where the models are expected to separate, or the two-axis model to be refuted. The count is reported as tested (four formats, 66 cells); nothing is extrapolated to the unrun families.
+
 ---
 
 ## 8 Related Work
