@@ -1523,9 +1523,9 @@ dependencies = [
 
 [[package]]
 name = "forensicnomicon"
-version = "1.8.0"
+version = "1.8.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8340c0ac2fd81daf453f19474b30c75d3b1152c5850c31b3519e20412a7f92d7"
+checksum = "feb4755bb43fc9c85fbf91bf37399f2f3ca958f35a7e90ca6a4f6f25a6664604"
 dependencies = [
  "forensicnomicon-core",
  "forensicnomicon-data",
@@ -1534,18 +1534,18 @@ dependencies = [
 
 [[package]]
 name = "forensicnomicon-core"
-version = "1.3.0"
+version = "1.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "26131e0c8a646fba012fc958151d480b3d17ddac27f3da2fa37e26a9fdde1e63"
+checksum = "d65a733200c34a6595461a80c6a3ca95816c63b55104ef72630c5324a74a6680"
 dependencies = [
  "serde",
 ]
 
 [[package]]
 name = "forensicnomicon-data"
-version = "1.3.1"
+version = "1.3.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7e1239a47f728cf7a88d7508f21a446960ae2e7eae41ad14a6bf7caa61548fcf"
+checksum = "826351faee29aabf7561d741e4fabb56b2b237be6c8d483c4df181e93b5f8b67"
 dependencies = [
  "forensicnomicon-core",
  "serde",
@@ -2294,7 +2294,7 @@ dependencies = [
 
 [[package]]
 name = "memf-format"
-version = "0.2.1"
+version = "0.3.0"
 dependencies = [
  "flate2",
  "goblin",
