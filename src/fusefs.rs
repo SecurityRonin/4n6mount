@@ -12,7 +12,7 @@ use crate::{
 };
 use fuser::{
     FileAttr, FileType, Filesystem, ReplyAttr, ReplyCreate, ReplyData, ReplyDirectory, ReplyEmpty,
-    ReplyEntry, ReplyWrite, Request, TimeOrNow,
+    ReplyEntry, ReplyWrite, ReplyXattr, Request, TimeOrNow,
 };
 use std::cell::RefCell;
 use std::ffi::OsStr;
@@ -776,6 +776,52 @@ fn deleted_in_place_children(entries: &[DeletedEntry], parent_fs_ino: u64) -> Ve
         .collect()
 }
 
+/// Format Unix seconds as ISO-8601 UTC `YYYY-MM-DDTHH:MM:SSZ` — the xattr
+/// *value* form (colons are legal in a value, unlike a filename), reusing the
+/// same civil-date math as [`filename_safe_utc`].
+#[allow(clippy::many_single_char_names)] // conventional date-field names
+fn iso8601_utc(secs: i64) -> String {
+    let days = secs.div_euclid(86_400);
+    let tod = secs.rem_euclid(86_400);
+    let (h, m, s) = (tod / 3600, (tod % 3600) / 60, tod % 60);
+    let (y, mon, d) = civil_from_days(days);
+    format!("{y:04}-{mon:02}-{d:02}T{h:02}:{m:02}:{s:02}Z")
+}
+
+/// The out-of-band marking schema exposed on a recovered-deleted entry (ADR
+/// 0008 v2): the deleted/orphan status plus the recovered MACB times. Live
+/// files carry none of these — the xattr channel is the mount's red-X.
+const DELETED_XATTR_NAMES: &[&str] = &[
+    "user.4n6.status",
+    "user.4n6.macb.modified",
+    "user.4n6.macb.accessed",
+    "user.4n6.macb.changed",
+    "user.4n6.macb.born",
+];
+
+fn deleted_xattr_names() -> &'static [&'static str] {
+    DELETED_XATTR_NAMES
+}
+
+/// Value of one xattr on a recovered-deleted entry, or `None` when the name is
+/// not part of the schema (the getxattr shell then replies `ENODATA`).
+/// `user.4n6.status` is `deleted`|`orphan`; the `macb.*` values are ISO-8601
+/// UTC. This is a metadata-only channel — the recovered content is untouched.
+fn deleted_xattr_value(entry: &DeletedEntry, name: &str) -> Option<Vec<u8>> {
+    let v = match name {
+        "user.4n6.status" => match entry.allocation {
+            FsAllocation::Deleted => "deleted".to_string(),
+            FsAllocation::Orphan => "orphan".to_string(),
+        },
+        "user.4n6.macb.modified" => iso8601_utc(entry.macb.modified.seconds),
+        "user.4n6.macb.accessed" => iso8601_utc(entry.macb.accessed.seconds),
+        "user.4n6.macb.changed" => iso8601_utc(entry.macb.changed.seconds),
+        "user.4n6.macb.born" => iso8601_utc(entry.macb.born.seconds),
+        _ => return None,
+    };
+    Some(v.into_bytes())
+}
+
 impl Filesystem for ForensicFuseFs {
     fn lookup(&mut self, _req: &Request, parent: u64, name: &OsStr, reply: ReplyEntry) {
         let name_bytes = name.as_encoded_bytes();
@@ -1167,6 +1213,64 @@ impl Filesystem for ForensicFuseFs {
                 }
             }
             _ => reply.error(libc::ENOENT),
+        }
+    }
+
+    /// Read one extended attribute. Only recovered-deleted/orphan entries carry
+    /// the `user.4n6.*` marking (ADR 0008 v2); live files and virtual nodes have
+    /// none, so they reply `ENODATA`. Follows the FUSE size-probe protocol:
+    /// `size == 0` returns the value length; otherwise the bytes (or `ERANGE`).
+    fn getxattr(&mut self, _req: &Request, ino: u64, name: &OsStr, size: u32, reply: ReplyXattr) {
+        let value = if let InodeNamespace::Deleted(fs_ino) = decode_fuse_ino(ino) {
+            self.ensure_deleted_cache();
+            let cache = self.deleted_cache.borrow();
+            let attr_name = name.to_str();
+            cache.as_ref().and_then(|entries| {
+                let n = attr_name?;
+                let e = entries.iter().find(|e| e.fs_ino == fs_ino)?;
+                deleted_xattr_value(e, n)
+            })
+        } else {
+            None
+        };
+        match value {
+            Some(v) => {
+                if size == 0 {
+                    reply.size(v.len() as u32);
+                } else if (v.len() as u32) <= size {
+                    reply.data(&v);
+                } else {
+                    reply.error(libc::ERANGE);
+                }
+            }
+            None => reply.error(libc::ENODATA),
+        }
+    }
+
+    /// List the extended attribute names on an entry. Recovered-deleted/orphan
+    /// entries expose the `user.4n6.*` marking schema; everything else lists
+    /// nothing. Names are NUL-separated per the FUSE `listxattr` contract.
+    fn listxattr(&mut self, _req: &Request, ino: u64, size: u32, reply: ReplyXattr) {
+        let mut buf: Vec<u8> = Vec::new();
+        if let InodeNamespace::Deleted(fs_ino) = decode_fuse_ino(ino) {
+            self.ensure_deleted_cache();
+            let cache = self.deleted_cache.borrow();
+            let present = cache
+                .as_ref()
+                .is_some_and(|entries| entries.iter().any(|e| e.fs_ino == fs_ino));
+            if present {
+                for n in deleted_xattr_names() {
+                    buf.extend_from_slice(n.as_bytes());
+                    buf.push(0);
+                }
+            }
+        }
+        if size == 0 {
+            reply.size(buf.len() as u32);
+        } else if (buf.len() as u32) <= size {
+            reply.data(&buf);
+        } else {
+            reply.error(libc::ERANGE);
         }
     }
 
