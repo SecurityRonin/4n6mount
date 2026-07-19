@@ -822,6 +822,18 @@ fn deleted_xattr_value(entry: &DeletedEntry, name: &str) -> Option<Vec<u8>> {
     Some(v.into_bytes())
 }
 
+/// Copy-up base bytes for an in-place recovered-deleted entry: its recovered
+/// content, when readable. `None` when the entry is unknown or its content
+/// could not be recovered — a write then fails loud rather than fabricating an
+/// empty file. The recovered base in the cache stays untouched; the write lands
+/// on the COW overlay, exactly like a live file (ADR 0008 v2).
+fn deleted_cow_base(entries: &[DeletedEntry], fs_ino: u64) -> Option<Vec<u8>> {
+    entries
+        .iter()
+        .find(|e| e.fs_ino == fs_ino && e.readable)
+        .map(|e| e.data.clone())
+}
+
 impl Filesystem for ForensicFuseFs {
     fn lookup(&mut self, _req: &Request, parent: u64, name: &OsStr, reply: ReplyEntry) {
         let name_bytes = name.as_encoded_bytes();
@@ -1087,7 +1099,19 @@ impl Filesystem for ForensicFuseFs {
                 let cache = self.deleted_cache.borrow();
                 if let Some(entries) = cache.as_ref() {
                     if let Some(entry) = entries.iter().find(|e| e.fs_ino == fs_ino) {
-                        reply.attr(&TTL, &virtual_file_attr(ino, entry.size));
+                        // A copied-up delete reports its overlay size (ADR 0008
+                        // v2 COW); otherwise the recovered size.
+                        let mut size = entry.size;
+                        let session = self.session.borrow();
+                        if let Some(s) = session.as_ref() {
+                            if s.overlay.modified.contains_key(&fs_ino) {
+                                let overlay_id = Self::modified_overlay_id(fs_ino);
+                                if let Ok(d) = s.read_overlay_file(&overlay_id) {
+                                    size = d.len() as u64;
+                                }
+                            }
+                        }
+                        reply.attr(&TTL, &virtual_file_attr(ino, size));
                         return;
                     }
                 }
@@ -1632,6 +1656,26 @@ impl Filesystem for ForensicFuseFs {
     ) {
         match decode_fuse_ino(ino) {
             InodeNamespace::Deleted(fs_ino) => {
+                // A copied-up recovered-deleted file reads from the overlay
+                // (ADR 0008 v2 COW); otherwise from the recovered-bytes cache.
+                {
+                    let session = self.session.borrow();
+                    if let Some(s) = session.as_ref() {
+                        if s.overlay.modified.contains_key(&fs_ino) {
+                            let overlay_id = Self::modified_overlay_id(fs_ino);
+                            if let Ok(d) = s.read_overlay_file(&overlay_id) {
+                                let off = offset as usize;
+                                if off >= d.len() {
+                                    reply.data(&[]);
+                                } else {
+                                    let end = (off + size as usize).min(d.len());
+                                    reply.data(&d[off..end]);
+                                }
+                                return;
+                            }
+                        }
+                    }
+                }
                 self.ensure_deleted_cache();
                 let cache = self.deleted_cache.borrow();
                 if let Some(entries) = cache.as_ref() {
@@ -1912,6 +1956,51 @@ impl Filesystem for ForensicFuseFs {
                     return;
                 }
 
+                reply.written(data.len() as u32);
+            }
+            // ADR 0008 v2: an in-place recovered-deleted file is COW-writable
+            // like a live file. First write copies up its recovered bytes onto
+            // the overlay (keyed by fs inode); the recovered base is untouched.
+            InodeNamespace::Deleted(fs_ino) => {
+                self.ensure_deleted_cache();
+                let overlay_id = Self::modified_overlay_id(fs_ino);
+                let mut session = self.session.borrow_mut();
+                let s = session.as_mut().unwrap();
+
+                if !s.overlay.modified.contains_key(&fs_ino) {
+                    let base = {
+                        let cache = self.deleted_cache.borrow();
+                        cache.as_ref().and_then(|e| deleted_cow_base(e, fs_ino))
+                    };
+                    // Unreadable recovered content cannot be copied up — fail
+                    // loud, never fabricate an empty base.
+                    let Some(base) = base else {
+                        reply.error(libc::EIO);
+                        return;
+                    };
+                    if s.write_overlay_file(&overlay_id, &base).is_err() {
+                        reply.error(libc::EIO);
+                        return;
+                    }
+                    s.overlay.modified.insert(fs_ino, overlay_id.clone());
+                }
+
+                let mut buf = s.read_overlay_file(&overlay_id).unwrap_or_default();
+                let off = offset as usize;
+                let end = off + data.len();
+                if end > buf.len() {
+                    buf.resize(end, 0);
+                }
+                buf[off..end].copy_from_slice(data);
+
+                if s.write_overlay_file(&overlay_id, &buf).is_err() {
+                    reply.error(libc::EIO);
+                    return;
+                }
+                if s.save().is_err() {
+                    reply.error(libc::EIO);
+                    return;
+                }
                 reply.written(data.len() as u32);
             }
             _ => reply.error(libc::EROFS),
