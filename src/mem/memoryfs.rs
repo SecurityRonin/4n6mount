@@ -486,7 +486,7 @@ mod tests {
     use memf_format::test_builders::LimeBuilder;
     use memf_session::OsProfile;
 
-    /// A `MemoryFs` over a trivial real provider (a 1-page LiME dump) with a
+    /// A `MemoryFs` over a trivial real provider (a 1-page `LiME` dump) with a
     /// directly-constructed Windows analysis context. The provider is not touched
     /// in Phase 1; the ctx drives `sys/os-info.txt`.
     fn mem_fs() -> MemoryFs<LimeProvider> {
@@ -495,7 +495,7 @@ mod tests {
         let provider = LimeProvider::from_bytes(&dump).unwrap();
         let ctx = AnalysisContext {
             os: OsProfile::Windows,
-            cr3: 0x1ab000,
+            cr3: 0x1a_b000,
             kaslr_offset: 0,
             ps_active_process_head: Some(0xFFFF_F800_DEAD_0000),
             ps_loaded_module_list: Some(0xFFFF_F800_BEEF_0000),
@@ -649,14 +649,14 @@ mod tests {
         let rows = vec![
             ModRow {
                 name: "ntoskrnl.exe".into(),
-                base_addr: 0xfffff800_0000_0000,
-                size: 0x800000,
+                base_addr: 0xffff_f800_0000_0000,
+                size: 0x80_0000,
                 path: "\\SystemRoot\\ntoskrnl.exe".into(),
             },
             ModRow {
                 name: "tcpip.sys".into(),
-                base_addr: 0xfffff800_0100_0000,
-                size: 0x200000,
+                base_addr: 0xffff_f800_0100_0000,
+                size: 0x20_0000,
                 path: String::new(),
             },
         ];

@@ -263,12 +263,12 @@ pub fn mount(
 mod memory_tests {
     use super::*;
 
-    /// build_memory_fs bootstraps a synthetic Windows crash dump (header carries
+    /// `build_memory_fs` bootstraps a synthetic Windows crash dump (header carries
     /// CR3 + machine type, so no symbols are required) and renders sys/os-info.
     #[test]
     fn build_memory_fs_bootstraps_crashdump() {
         use memf_format::test_builders::CrashDumpBuilder;
-        let bytes = CrashDumpBuilder::new().cr3(0x1ab000).build();
+        let bytes = CrashDumpBuilder::new().cr3(0x1a_b000).build();
 
         let dir = std::env::temp_dir().join(format!("4n6mem_{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();

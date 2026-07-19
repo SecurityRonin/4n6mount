@@ -24,6 +24,6 @@ mod smoke {
         // memf-session (Phase 0 extraction) links and its types are usable.
         assert_eq!(memf_session::OsProfile::Windows.to_string(), "Windows");
         // memf-format's universal dump opener is linkable as a function item.
-        let _open = memf_format::open_dump;
+        let _ = memf_format::open_dump;
     }
 }
