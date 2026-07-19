@@ -186,9 +186,9 @@ checksum = "330a5ed07fa54e4702c9d6c4174f74427fc0ef6e214bbd677ae50a5099946470"
 
 [[package]]
 name = "apfs-core"
-version = "0.2.3"
+version = "0.2.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "027e1fd6d460c601e3da7025bfa65a047060fa7e1a9259774e12b3f53d12a753"
+checksum = "9c0cc2490ace61364285a562ebd9f0fc6492a7705d6497a3cbebfbdc4d44fcd8"
 dependencies = [
  "bitflags 2.13.1",
  "chrono",
@@ -226,7 +226,7 @@ dependencies = [
 
 [[package]]
 name = "archive-core"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "bzip2-rs",
  "flate2",
@@ -240,9 +240,9 @@ dependencies = [
 
 [[package]]
 name = "archive-core"
-version = "0.1.1"
+version = "0.1.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1f220d5d4d974df548b7e0844e90c19192d794076873a8dfd2d3f923d8516f85"
+checksum = "67efd8c8c4b85e76e77865d5cceb34d550085828b432dd44817ce8b019dc282a"
 dependencies = [
  "bzip2-rs",
  "flate2",
@@ -409,9 +409,9 @@ checksum = "b588b76d00fde79687d7646a9b5bdf3cc0f655e0bbd080335a95d7e96f3587da"
 
 [[package]]
 name = "bitlocker-core"
-version = "0.3.3"
+version = "0.3.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "de6b0a524035bd076ecf26383b135970ecf759d23d41428020eb4e4b231be76c"
+checksum = "c9c0cdb606f179ed1cc825b4ea976d6fd9a70dccfbcec022ed3b7623293a686a"
 dependencies = [
  "aes 0.8.4",
  "cbc 0.1.2",
@@ -541,9 +541,9 @@ dependencies = [
 
 [[package]]
 name = "btrfs-core"
-version = "0.1.2"
+version = "0.1.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8c35184981d47fdfe9a1e535f2bef073b628cad5704e09e77480329601924782"
+checksum = "2244c0efa9388511e017448b6a096e517f3dcc7533afb61cacbe366f8135960c"
 dependencies = [
  "crc",
  "flate2",
@@ -1298,9 +1298,9 @@ dependencies = [
 
 [[package]]
 name = "ewf"
-version = "0.4.4"
+version = "0.4.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b5994830f64ac562af09e6e7bdb7799bd26d8f2cc4ce004e9d5e5a46f34de012"
+checksum = "886ce907e419478196194c83f905b96146eec6e75cdf332528a8e2496d0be292"
 dependencies = [
  "adler2",
  "flate2",
@@ -1316,9 +1316,9 @@ dependencies = [
 
 [[package]]
 name = "ext4fs-core"
-version = "0.2.3"
+version = "0.2.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2ea9eaf0a6aba35244fd80b33b2f1034cc32dd53a5afc6117be8c3c8be154b83"
+checksum = "7d423bfa8d7d232655c96a665ac0ede6a2485321b485f232c59c68f5081176b6"
 dependencies = [
  "bitflags 2.13.1",
  "blazehash-core",
@@ -1353,9 +1353,9 @@ checksum = "da7c62ceae207dd37ea5b845da6a0696c799f85e97da1ab5b7910be3c1c80223"
 
 [[package]]
 name = "fat-core"
-version = "0.1.2"
+version = "0.1.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1c5a276d88d88b9e3642b28788d2548e38528be31364d0dacc97adcc41bed7ea"
+checksum = "8f4fca9c77da83a7b038dc670e3679a7f38bf49b99a8631bff53cf5ed43021cb"
 dependencies = [
  "forensic-vfs",
  "thiserror 2.0.19",
@@ -1392,9 +1392,9 @@ dependencies = [
 
 [[package]]
 name = "filevault-core"
-version = "0.1.3"
+version = "0.1.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3c15b59e0b67b070b8880b6f78c6ea1b3c81261806ce963d0ed42521f5c68967"
+checksum = "5f3841389607976517e0371977ddf79b7d02745291be53f0354813dc1f175dc8"
 dependencies = [
  "aes 0.8.4",
  "aes-kw",
@@ -1460,7 +1460,7 @@ checksum = "77ce24cb58228fbb8aa041425bb1050850ac19177686ea6e0f41a70416f56fdb"
 name = "forensic-mount"
 version = "0.5.0"
 dependencies = [
- "archive-core 0.1.1",
+ "archive-core 0.1.2",
  "clap",
  "dokan",
  "flate2",
@@ -1487,9 +1487,9 @@ dependencies = [
 
 [[package]]
 name = "forensic-vfs"
-version = "0.4.3"
+version = "0.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "314802ebfff0aeebf1f01c4f8bd535372e4a560c0039c5fc3df34a5d35df8ab2"
+checksum = "238d800beff9e362651569fd50591508ab04aa68321e4a3132625150b126ae8d"
 dependencies = [
  "forensicnomicon-core",
  "state-history-forensic",
@@ -1503,7 +1503,7 @@ dependencies = [
  "aff4",
  "apfs-core",
  "apm-partition-core",
- "archive-core 0.1.1 (registry+https://github.com/rust-lang/crates.io-index)",
+ "archive-core 0.1.2 (registry+https://github.com/rust-lang/crates.io-index)",
  "bitlocker-core",
  "btrfs-core",
  "dmg-core",
@@ -1530,7 +1530,9 @@ dependencies = [
 
 [[package]]
 name = "forensic-vfs-resolver"
-version = "0.1.3"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3a3863f27c52135152b7f729828aced07bd13adb32b98f4681fd6cc1f0688ec7"
 dependencies = [
  "forensic-vfs",
  "state-history-forensic",
@@ -1806,9 +1808,9 @@ checksum = "7f24254aa9a54b5c858eaee2f5bccdb46aaf0e486a595ed5fd8f86ba55232a70"
 
 [[package]]
 name = "hfsplus-forensic"
-version = "0.2.3"
+version = "0.2.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3e0c41a6f7d48bc684029b674bdc11e95a125e8339e4725e03d0645c6f0d2d17"
+checksum = "6b4e448af9c498de76c3c0a29472ae7e405586000f4743c0eac420ed0e67ef6e"
 dependencies = [
  "flate2",
  "forensic-vfs",
@@ -1986,9 +1988,9 @@ checksum = "a6cb138bb79a146c1bd460005623e142ef0181e3d0219cb493e02f7d08a35695"
 
 [[package]]
 name = "iso9660-forensic"
-version = "0.7.3"
+version = "0.7.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5e44ae99ec6b459e4942d8f6605cb68673641954f28627e06822c44908e80ef6"
+checksum = "b3bb542c961daa8909d230eb762069c220a39cfce4579f3420ba0833c9e2ad2c"
 dependencies = [
  "forensic-vfs",
  "forensicnomicon",
@@ -2177,9 +2179,9 @@ dependencies = [
 
 [[package]]
 name = "luks-core"
-version = "0.1.4"
+version = "0.1.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "58e49b008a1c82e1a4a35bd08caf3db8cd74418d60de2c3b020e1730a6967123"
+checksum = "d51571c2d5022ada984272422fc707cad7be4053cc603af34d50c626fbe89cd2"
 dependencies = [
  "aes 0.8.4",
  "argon2",
@@ -2491,9 +2493,9 @@ dependencies = [
 
 [[package]]
 name = "ntfs-core"
-version = "0.9.3"
+version = "0.9.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "386649ea68eb50c04fe399cfb2fab621c5717a3f0c5389cfc75c6624a383f3fe"
+checksum = "197a8ce5b3e9add82aeda6988bfcf028541e7bd7c13b444e24e66724dde007e5"
 dependencies = [
  "bitflags 2.13.1",
  "chrono",
@@ -3831,9 +3833,9 @@ checksum = "b6f5e870be6c3b371b77fe0ee0bafb859fa4964b4404c27de1d380043c4dda20"
 
 [[package]]
 name = "udf-forensic"
-version = "0.2.1"
+version = "0.2.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5fdb818d9d3957b9f8e395b8692a6d7c69e604f84d93754f3ec45635cbc5c947"
+checksum = "8b369d840c27abb6ad07b842b952a646e87569ccc907e1e4e6cb607268b28545"
 dependencies = [
  "forensic-vfs",
  "forensicnomicon",
@@ -3841,9 +3843,9 @@ dependencies = [
 
 [[package]]
 name = "ufs-core"
-version = "0.1.2"
+version = "0.1.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9a8d657453d87b1834104d0fe6c1fe297fe9d75862347792b9db11409a107062"
+checksum = "35fa88b1e97bfb01b04a125a5c05f67feb29405f778d2ac493fb2cc9b3983e2d"
 dependencies = [
  "forensic-vfs",
  "thiserror 2.0.19",
@@ -3949,9 +3951,9 @@ checksum = "accd4ea62f7bb7a82fe23066fb0957d48ef677f6eeb8215f372f52e48bb32426"
 
 [[package]]
 name = "veracrypt-core"
-version = "0.2.2"
+version = "0.2.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "46b5418c018abdc7ed4696e2f17abc95ddc405b57ad4d3e1166466d1df14ae02"
+checksum = "c241e8ec661c33ebae86aa375d705ea330c2e878a1767dbb7af0587385197537"
 dependencies = [
  "aes 0.8.4",
  "crc32fast",
@@ -4675,9 +4677,9 @@ dependencies = [
 
 [[package]]
 name = "xfs-core"
-version = "0.1.3"
+version = "0.1.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5cf56864d52764227a79b72797c04ca7d7f433fc274c7ee4b6c37ce0360ade38"
+checksum = "04f2754f2eee2438bdeb43edda30ecd3295aee585d7504efb1c317345a3b3042"
 dependencies = [
  "crc",
  "forensic-vfs",
