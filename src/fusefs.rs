@@ -415,6 +415,19 @@ impl ForensicFuseFs {
         }
         None
     }
+
+    /// Resolve a name to an in-place recovered-deleted child of `parent_fs_ino`,
+    /// returning `(deleted-namespace fuse inode, size)` when a non-orphan entry
+    /// under that parent carries exactly that real name (ADR 0008 v2). Ensures
+    /// the deleted cache first, so callers must not hold a borrow of `self.fs`.
+    fn lookup_deleted_in_place(&self, parent_fs_ino: u64, name: &[u8]) -> Option<(u64, u64)> {
+        self.ensure_deleted_cache();
+        let cache = self.deleted_cache.borrow();
+        cache.as_ref()?.iter().find_map(|e| {
+            (!e.orphan && e.parent_ino == Some(parent_fs_ino) && e.name.as_bytes() == name)
+                .then_some((deleted_ino(e.fs_ino), e.size))
+        })
+    }
 }
 
 /// Convert a `FsTimestamp` to `SystemTime`.
@@ -719,6 +732,21 @@ fn deleted_timeline_row(e: &DeletedEntry) -> String {
     serde_json::to_string(&row).unwrap_or_default()
 }
 
+/// In-place recovered-deleted children of a live directory: the non-orphan
+/// entries whose recovered parent is `parent_fs_ino`, returned as
+/// `(deleted-namespace fuse inode, real name)`. The main-tree readdir/lookup
+/// inject these beside the live siblings so a recovered deleted file appears at
+/// its real path under its real name — no `deleted/` subtree, no name
+/// decoration (ADR 0008 v2). The `deleted_ino` encoding keeps content served
+/// from the recovered-bytes cache via the existing `Deleted` namespace.
+fn deleted_in_place_children(entries: &[DeletedEntry], parent_fs_ino: u64) -> Vec<(u64, String)> {
+    entries
+        .iter()
+        .filter(|e| !e.orphan && e.parent_ino == Some(parent_fs_ino))
+        .map(|e| (deleted_ino(e.fs_ino), e.name.clone()))
+        .collect()
+}
+
 impl Filesystem for ForensicFuseFs {
     fn lookup(&mut self, _req: &Request, parent: u64, name: &OsStr, reply: ReplyEntry) {
         let name_bytes = name.as_encoded_bytes();
@@ -868,6 +896,10 @@ impl Filesystem for ForensicFuseFs {
 
         // rw/ namespace lookup.
         if let Some(fs_parent) = self.rw_parent_to_fs(parent) {
+            // ADR 0008 v2: an in-place recovered deleted child resolves at its
+            // real name. Precomputed before any fs borrow below.
+            let deleted_hit = self.lookup_deleted_in_place(fs_parent, name_bytes);
+
             // Check overlay created files first.
             if let Some((id, counter, is_dir)) = self.find_created_by_name(fs_parent, name_bytes) {
                 let session = self.session.borrow();
@@ -927,6 +959,10 @@ impl Filesystem for ForensicFuseFs {
                         return;
                     }
                     Ok(None) => {
+                        if let Some((fino, size)) = deleted_hit {
+                            reply.entry(&TTL, &virtual_file_attr(fino, size), 0);
+                            return;
+                        }
                         reply.error(libc::ENOENT);
                         return;
                     }
@@ -953,6 +989,9 @@ impl Filesystem for ForensicFuseFs {
             }
         };
 
+        // In-place recovered deleted child (checked before the fs borrow).
+        let deleted_hit = self.lookup_deleted_in_place(fs_parent, name_bytes);
+
         let mut fs = self.fs.borrow_mut();
         match fs.lookup(fs_parent, name_bytes) {
             Ok(Some(child_ino)) => match fs.metadata(child_ino) {
@@ -962,7 +1001,13 @@ impl Filesystem for ForensicFuseFs {
                 }
                 Err(_) => reply.error(libc::EIO),
             },
-            Ok(None) => reply.error(libc::ENOENT),
+            Ok(None) => {
+                if let Some((fino, size)) = deleted_hit {
+                    reply.entry(&TTL, &virtual_file_attr(fino, size), 0);
+                } else {
+                    reply.error(libc::ENOENT);
+                }
+            }
             Err(_) => reply.error(libc::EIO),
         }
     }
@@ -1167,6 +1212,19 @@ impl Filesystem for ForensicFuseFs {
                 _ => None,
             },
         } {
+            // ADR 0008 v2: recovered deleted children render in-place beside the
+            // live siblings. Computed before borrowing fs (ensure_deleted_cache
+            // takes its own fs borrow).
+            self.ensure_deleted_cache();
+            let injected: Vec<(u64, FileType, String)> = {
+                let cache = self.deleted_cache.borrow();
+                cache.as_ref().map_or_else(Vec::new, |c| {
+                    deleted_in_place_children(c, fs_dir_ino)
+                        .into_iter()
+                        .map(|(dino, name)| (dino, FileType::RegularFile, name))
+                        .collect()
+                })
+            };
             let mut fs = self.fs.borrow_mut();
             match fs.read_dir(fs_dir_ino) {
                 Ok(entries) => {
@@ -1231,6 +1289,9 @@ impl Filesystem for ForensicFuseFs {
                             }
                         }
                     }
+
+                    // Recovered deleted children, in-place at their real name.
+                    fuse_entries.extend(injected);
 
                     for (i, (entry_ino, kind, name)) in fuse_entries.iter().enumerate().skip(offset)
                     {
@@ -1436,11 +1497,24 @@ impl Filesystem for ForensicFuseFs {
             }
         };
 
+        // ADR 0008 v2: recovered deleted children also render in-place in the
+        // read-only view of the main tree.
+        self.ensure_deleted_cache();
+        let injected: Vec<(u64, FileType, String)> = {
+            let cache = self.deleted_cache.borrow();
+            cache.as_ref().map_or_else(Vec::new, |c| {
+                deleted_in_place_children(c, fs_dir_ino)
+                    .into_iter()
+                    .map(|(dino, name)| (dino, FileType::RegularFile, name))
+                    .collect()
+            })
+        };
+
         let mut fs = self.fs.borrow_mut();
         match fs.read_dir(fs_dir_ino) {
             Ok(entries) => {
                 let root_ino = self.root_ino;
-                let fuse_entries: Vec<(u64, FileType, String)> = entries
+                let mut fuse_entries: Vec<(u64, FileType, String)> = entries
                     .iter()
                     .map(|e| {
                         let name = e.name_str();
@@ -1459,6 +1533,8 @@ impl Filesystem for ForensicFuseFs {
                         (fuse_ino, kind, name)
                     })
                     .collect();
+
+                fuse_entries.extend(injected);
 
                 for (i, (entry_ino, kind, name)) in fuse_entries.iter().enumerate().skip(offset) {
                     if reply.add(*entry_ino, (i + 1) as i64, *kind, name) {
