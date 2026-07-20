@@ -4,11 +4,13 @@
 //! that is the tiny FAT EFI System Partition, so the NTFS Windows volume was
 //! never reachable).
 //!
-//! [`open_image_all`](forensic_mount::open_image_all) opens every partition and,
-//! when more than one carries a filesystem, multiplexes them under a synthetic
-//! root as `p1`, `p2`, … subdirectories; a single-filesystem image is returned
-//! unchanged (mounted at the root). This test drives the library `ForensicFs`
-//! trait directly — no FUSE — exactly like `e2e_image_read.rs`.
+//! [`open_image_all`](forensic_mount::open_image_all) opens every partition and
+//! renders the ADR-0010 unified layout `<mount>/<volume>/<fs tree>` at constant
+//! depth: every volume is a `<volume>/` directory under a synthetic root —
+//! `_partition<index+1>` for a partitioned disk with no label wired, or a single
+//! `root` volume for a bare unpartitioned filesystem. This test drives the
+//! library `ForensicFs` trait directly — no FUSE — exactly like
+//! `e2e_image_read.rs`.
 //!
 //! Two layers, one file:
 //!
@@ -61,6 +63,84 @@ fn open_image_all_on_missing_path_errors() {
     assert!(open_image_all(&path).is_err(), "missing path must Err");
 }
 
+/// ADR-0010: a **bare, unpartitioned** filesystem renders as exactly one
+/// `<volume>/` directory named `root` (no volume-table `Layer::Volume`, no label
+/// wired), and a real file is readable through `<root>/…`. Uses the committed
+/// `tests/data/exfat.img` fixture, so it runs in CI with no external data.
+#[test]
+fn open_image_all_bare_volume_renders_single_root_dir() {
+    let img = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/data/exfat.img");
+    let mut fs = open_image_all(&img).expect("open_image_all must mount the bare exFAT fixture");
+    let root = fs.root_ino();
+
+    let entries = fs.read_dir(root).expect("read_dir(root) must succeed");
+    let names: Vec<String> = entries
+        .iter()
+        .map(forensic_mount::FsDirEntry::name_str)
+        .collect();
+    assert_eq!(
+        names,
+        vec!["root".to_string()],
+        "a bare unpartitioned filesystem must render exactly one `root` volume, saw {names:?}"
+    );
+    let vol = &entries[0];
+    assert_eq!(
+        vol.file_type,
+        FsFileType::Directory,
+        "the `root` volume entry must be a directory"
+    );
+
+    // Read a real file through <root>/… — BFS the volume tree for the first
+    // readable regular file and prove size-matched, non-empty content.
+    let mut queue: std::collections::VecDeque<u64> = std::collections::VecDeque::new();
+    let mut visited: std::collections::HashSet<u64> = std::collections::HashSet::new();
+    queue.push_back(vol.inode);
+    visited.insert(vol.inode);
+    let mut read_a_file = false;
+    'outer: while let Some(ino) = queue.pop_front() {
+        let Ok(children) = fs.read_dir(ino) else {
+            continue;
+        };
+        for e in children {
+            if e.name == b"." || e.name == b".." {
+                continue;
+            }
+            match e.file_type {
+                FsFileType::Directory => {
+                    if visited.insert(e.inode) {
+                        queue.push_back(e.inode);
+                    }
+                }
+                FsFileType::RegularFile => {
+                    let Ok(meta) = fs.metadata(e.inode) else {
+                        continue;
+                    };
+                    if meta.size == 0 {
+                        continue;
+                    }
+                    let bytes = fs
+                        .read_file(e.inode)
+                        .expect("read_file on a real bare-volume file must succeed");
+                    assert_eq!(
+                        bytes.len() as u64,
+                        meta.size,
+                        "read_file byte count for {:?} must equal metadata size",
+                        e.name_str()
+                    );
+                    assert!(!bytes.is_empty());
+                    read_a_file = true;
+                    break 'outer;
+                }
+                _ => {}
+            }
+        }
+    }
+    assert!(
+        read_a_file,
+        "must read at least one real file through <root>/… on the bare exFAT fixture"
+    );
+}
+
 // ---------------------------------------------------------------------------
 // Env-gated e2e against a real multi-partition disk image
 // ---------------------------------------------------------------------------
@@ -83,10 +163,10 @@ const MAX_DEPTH: u32 = 8;
 const MAX_READ_SIZE: u64 = 16 * 1024 * 1024;
 
 /// Drive `open_image_all` against a real multi-partition image: assert several
-/// partitions surface under the synthetic root, locate the NTFS partition, prove
-/// its root carries NTFS markers, and read a real regular file from it back —
-/// non-empty, size-matched — proving the NTFS vfs adapter is reachable via the
-/// new `/pN` multiplex layout.
+/// `_partition<N>` volumes surface under the synthetic root, locate the NTFS
+/// volume, prove its root carries NTFS markers, and read a real regular file
+/// from it back — non-empty, size-matched — proving the NTFS vfs adapter is
+/// reachable via the ADR-0010 `<volume>/` layout.
 ///
 /// Env-gated on `FN_E2E_IMAGE`; skips cleanly when unset or the file is absent.
 #[test]
@@ -122,6 +202,14 @@ fn e2e_multipartition_surfaces_ntfs() {
         parts.len() >= 2,
         "a multi-partition disk must surface >= 2 partitions, saw {part_names:?}"
     );
+    // ADR-0010: a GPT disk with no volume labels wired renders each volume as
+    // `_partition<index+1>` (never the old `p1-fat`/`p2-ntfs` kind-tagged form).
+    for n in &part_names {
+        assert!(
+            n.starts_with("_partition"),
+            "each volume of a label-less GPT disk must be named `_partitionN`, saw {n:?}"
+        );
+    }
     for e in &parts {
         assert_eq!(
             e.file_type,

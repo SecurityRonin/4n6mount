@@ -669,3 +669,91 @@ impl ForensicFs for MultiPartitionFs {
         self.parts.first().map_or(4096, ForensicFs::block_size)
     }
 }
+
+#[cfg(test)]
+mod layout_tests {
+    //! ADR-0010 unified `<volume>/` naming: the precedence
+    //! (label → `_partition<index+1>` → `root`) and the reversible
+    //! percent-sanitization, proven directly against the pure helpers so the
+    //! label HOOK is exercised even though no leaf label accessor is wired yet.
+    use super::{sanitize_volume_label, volume_dir_name};
+    use std::collections::HashSet;
+
+    #[test]
+    fn label_kept_verbatim_including_spaces_and_unicode() {
+        let used = HashSet::new();
+        assert_eq!(
+            volume_dir_name(Some(0), Some("System Reserved".to_string()), &used),
+            "System Reserved",
+            "a label keeps its spaces/case verbatim (ADR-0010)"
+        );
+        assert_eq!(
+            sanitize_volume_label("Café"),
+            "Café",
+            "Unicode is kept verbatim"
+        );
+    }
+
+    #[test]
+    fn label_slash_is_percent_encoded() {
+        let used = HashSet::new();
+        assert_eq!(
+            volume_dir_name(Some(1), Some("a/b".to_string()), &used),
+            "a%2Fb",
+            "`/` is reversibly percent-encoded so it cannot split the path"
+        );
+    }
+
+    #[test]
+    fn no_label_with_volume_layer_is_partition_index_plus_one() {
+        let used = HashSet::new();
+        assert_eq!(volume_dir_name(Some(0), None, &used), "_partition1");
+        assert_eq!(volume_dir_name(Some(2), None, &used), "_partition3");
+    }
+
+    #[test]
+    fn no_label_no_volume_layer_is_root() {
+        let used = HashSet::new();
+        assert_eq!(
+            volume_dir_name(None, None, &used),
+            "root",
+            "a bare unpartitioned filesystem renders as a single `root` volume"
+        );
+    }
+
+    #[test]
+    fn empty_or_colliding_label_falls_back_to_partition() {
+        let mut used = HashSet::new();
+        assert_eq!(
+            volume_dir_name(Some(0), Some(String::new()), &used),
+            "_partition1",
+            "an empty sanitized label falls back to the partition index"
+        );
+        used.insert("dup".to_string());
+        assert_eq!(
+            volume_dir_name(Some(1), Some("dup".to_string()), &used),
+            "_partition2",
+            "a colliding label falls back to the partition index"
+        );
+    }
+
+    #[test]
+    fn sanitize_encodes_control_bidi_and_percent_reversibly() {
+        assert_eq!(
+            sanitize_volume_label("x\ty"),
+            "x%09y",
+            "TAB control encoded"
+        );
+        assert_eq!(
+            sanitize_volume_label("a\u{202E}b"),
+            "a%E2%80%AEb",
+            "the RIGHT-TO-LEFT OVERRIDE bidi char is encoded to its UTF-8 bytes"
+        );
+        assert_eq!(
+            sanitize_volume_label("50%"),
+            "50%25",
+            "`%` is escaped for reversibility"
+        );
+        assert_eq!(sanitize_volume_label("NUL\0x"), "NUL%00x", "NUL encoded");
+    }
+}
