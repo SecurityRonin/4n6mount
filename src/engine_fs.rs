@@ -22,7 +22,8 @@ use std::io;
 use std::path::{Path, PathBuf};
 
 use forensic_vfs::{
-    Allocation, DynFs, FileId, MacbTimes, NodeKind, StreamId, TimeStamp, TimeZonePolicy, VfsError,
+    Allocation, DynFs, FileId, Layer, MacbTimes, NodeKind, PathSpec, StreamId, TimeStamp,
+    TimeZonePolicy, VfsError,
 };
 use forensic_vfs_engine::Vfs;
 
@@ -376,19 +377,25 @@ pub fn open_image(path: &Path) -> io::Result<Box<dyn ForensicFs + Send>> {
     Ok(Box::new(EngineFs::new(fs, None)))
 }
 
-/// Open a disk-image evidence file, surfacing **every** partition as a mountable
-/// [`ForensicFs`].
+/// Open a disk-image evidence file into the ADR-0010 unified mount layout:
+/// `<mount>/<volume>/<fs tree>` at **constant depth**, so a consumer walks the
+/// same shape whether the image holds one filesystem or many.
 ///
 /// [`open_image`] mounts only the first filesystem the engine finds; on a Windows
 /// GPT disk that is the tiny FAT EFI System Partition, so the NTFS Windows volume
-/// is unreachable. This opens all partitions via `Vfs::open_all`:
+/// is unreachable. This opens all partitions via `Vfs::open_all` and wraps
+/// **every** result — one or many — in a [`MultiPartitionFs`], so each filesystem
+/// is a `<volume>/` directory under a synthetic root:
 ///
-/// * **One** filesystem (a single-partition disk, a bare volume) is returned
-///   directly, mounted at the root — behavior and inode scheme identical to
-///   [`open_image`], so single-filesystem images are unchanged.
-/// * **Several** filesystems are multiplexed under a synthetic root as `p1`,
-///   `p2`, … subdirectories (labelled with the filesystem kind, e.g. `p2-ntfs`)
-///   by a [`MultiPartitionFs`].
+/// * A **bare, unpartitioned** filesystem (no volume table) is one volume named
+///   `root`.
+/// * A **partitioned** disk names each volume by the ADR-0010 precedence
+///   ([`volume_dir_name`]): a wired label (kept verbatim, only unsafe characters
+///   reversibly percent-encoded), else `_partition<index+1>`.
+///
+/// The dense per-partition inode multiplexing (see [`MultiPartitionFs`]) keeps
+/// each volume's inode space disjoint while flowing through the FUSE mount layer
+/// exactly like a single filesystem.
 ///
 /// Transparently peels an OUTER compression wrapper first (as [`open_image`]),
 /// keeping the spilled temp image alive for the mount's lifetime.
@@ -407,9 +414,14 @@ pub fn open_image_all(path: &Path) -> io::Result<Box<dyn ForensicFs + Send>> {
     let evidences = Vfs::new()
         .open_all(&image)
         .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e.to_string()))?;
-    let mut fss: Vec<DynFs> = evidences.into_iter().filter_map(|e| e.fs).collect();
+    // Keep each evidence's locator (its `PathSpec`) alongside the mounted fs — the
+    // `Layer::Volume { index }` in that chain drives the `_partition<N>` naming.
+    let pairs: Vec<(PathSpec, DynFs)> = evidences
+        .into_iter()
+        .filter_map(|e| e.fs.map(|fs| (e.root, fs)))
+        .collect();
 
-    if fss.is_empty() {
+    if pairs.is_empty() {
         return Err(io::Error::new(
             io::ErrorKind::InvalidData,
             format!(
@@ -419,23 +431,121 @@ pub fn open_image_all(path: &Path) -> io::Result<Box<dyn ForensicFs + Send>> {
         ));
     }
 
-    // A single filesystem mounts at the root — unchanged UX for single-fs images.
-    if fss.len() == 1 {
-        let fs = fss
-            .pop()
-            .unwrap_or_else(|| unreachable!("len checked == 1"));
-        return Ok(Box::new(EngineFs::new(fs, tmp)));
-    }
-
-    // Multiple filesystems: multiplex them under a synthetic root as p1..pN.
-    let mut parts = Vec::with_capacity(fss.len());
-    let mut labels = Vec::with_capacity(fss.len());
-    for (i, fs) in fss.into_iter().enumerate() {
-        let ef = EngineFs::new(fs, None);
-        labels.push(format!("p{}-{}", i + 1, ef.fs_kind_str()).into_bytes());
-        parts.push(ef);
+    // ADR-0010: wrap every image — one filesystem or many — in the volume
+    // multiplexer, so the layout is `<mount>/<volume>/<fs tree>` at constant
+    // depth. A single filesystem is just one `<volume>`.
+    let mut parts = Vec::with_capacity(pairs.len());
+    let mut labels = Vec::with_capacity(pairs.len());
+    let mut used: std::collections::HashSet<String> = std::collections::HashSet::new();
+    for (spec, fs) in pairs {
+        // The label HOOK — `None` today (no leaf accessor exposes a volume label);
+        // when one lands, this is the single place the name lights up.
+        let label = volume_label(&spec, &fs);
+        let name = volume_dir_name(volume_index(&spec), label, &used);
+        used.insert(name.clone());
+        labels.push(name.into_bytes());
+        parts.push(EngineFs::new(fs, None));
     }
     Ok(Box::new(MultiPartitionFs::new(parts, labels, tmp)))
+}
+
+/// The volume-label HOOK for a resolved evidence (ADR-0010 naming precedence,
+/// step 1). It returns `None` **today**: no leaf accessor exposes a volume label
+/// — `forensic_vfs::FileSystem` has none, and [`EngineFs::fs_info`] reports the
+/// filesystem *kind*, not a label. This is the ONE place volume-label extraction
+/// lights up when such an accessor lands; until then every disk falls through to
+/// the `_partition<N>` / `root` steps below.
+#[allow(clippy::unnecessary_wraps)] // signature is the hook; it will return Some once wired.
+fn volume_label(_spec: &PathSpec, _fs: &DynFs) -> Option<String> {
+    None
+}
+
+/// The `Layer::Volume { index }` in an evidence's locator chain, if any. A bare
+/// (unpartitioned) filesystem's chain has no `Volume` layer, so this is `None`
+/// and the volume renders as `root`.
+fn volume_index(spec: &PathSpec) -> Option<usize> {
+    spec.layers().into_iter().find_map(|l| match l {
+        Layer::Volume { index, .. } => Some(*index),
+        _ => None,
+    })
+}
+
+/// The `<volume>/` directory name for one resolved volume, per the ADR-0010
+/// precedence:
+///
+/// 1. a wired **label** — sanitized ([`sanitize_volume_label`]) and used verbatim
+///    when it is non-empty and free of collision;
+/// 2. else `_partition<index+1>` when the locator carries a `Layer::Volume`;
+/// 3. else `root` — a bare, unpartitioned filesystem.
+///
+/// An empty-after-sanitization or colliding label falls back to
+/// `_partition<index+1>` (or `root` when there is no volume index). Pure and
+/// deterministic, so the precedence is unit-tested directly.
+fn volume_dir_name(
+    volume_index: Option<usize>,
+    label: Option<String>,
+    used: &std::collections::HashSet<String>,
+) -> String {
+    if let Some(raw) = label {
+        let sanitized = sanitize_volume_label(&raw);
+        if !sanitized.is_empty() && !used.contains(&sanitized) {
+            return sanitized;
+        }
+    }
+    match volume_index {
+        Some(idx) => format!("_partition{}", idx + 1),
+        None => "root".to_string(),
+    }
+}
+
+/// Reversibly percent-encode the characters ADR-0010 forbids in a `<volume>/`
+/// name, keeping spaces, case, and Unicode verbatim. Encoded: `%` (the escape
+/// introducer, so the transform is reversible), `/` (a path separator), NUL and
+/// all control characters, the Unicode bidirectional formatting/override
+/// characters (spoofing-resistant paths), and — only on Windows — the
+/// Dokan-reserved filename set. Each encoded character becomes `%XX` per UTF-8
+/// byte (e.g. `/` → `%2F`, U+202E → `%E2%80%AE`).
+fn sanitize_volume_label(label: &str) -> String {
+    const HEX: &[u8; 16] = b"0123456789ABCDEF";
+    let mut out = String::with_capacity(label.len());
+    for ch in label.chars() {
+        if should_percent_encode(ch) {
+            let mut buf = [0u8; 4];
+            for b in ch.encode_utf8(&mut buf).bytes() {
+                out.push('%');
+                out.push(HEX[(b >> 4) as usize] as char);
+                out.push(HEX[(b & 0x0F) as usize] as char);
+            }
+        } else {
+            out.push(ch);
+        }
+    }
+    out
+}
+
+/// Whether a character must be percent-encoded in a `<volume>/` name (see
+/// [`sanitize_volume_label`]).
+fn should_percent_encode(ch: char) -> bool {
+    // '%' is the escape introducer — encode it so the transform round-trips.
+    if ch == '%' || ch == '/' {
+        return true;
+    }
+    // NUL, the C0/C1 control ranges, and DEL.
+    if ch.is_control() {
+        return true;
+    }
+    // Bidirectional formatting / override characters (LRM/RLM/LRE…RLO/isolates).
+    if matches!(ch,
+        '\u{200E}' | '\u{200F}' | '\u{202A}'..='\u{202E}' | '\u{2066}'..='\u{2069}')
+    {
+        return true;
+    }
+    // The Windows/Dokan-reserved filename characters (`/` already handled above).
+    #[cfg(windows)]
+    if matches!(ch, '<' | '>' | ':' | '"' | '\\' | '|' | '?' | '*') {
+        return true;
+    }
+    false
 }
 
 /// Attempt to peel one outer compression wrapper, spilling the inner image to a
@@ -492,12 +602,15 @@ fn mount_engine(path: &Path) -> io::Result<DynFs> {
 /// The synthetic-root inode of a [`MultiPartitionFs`].
 const MP_ROOT_INO: u64 = 1;
 
-/// A multiplexer that surfaces each partition of a multi-partition disk image as
-/// a `pN` subdirectory under a synthetic root, so an analyst reaches every
-/// filesystem (e.g. both the FAT EFI System Partition *and* the NTFS Windows
-/// volume of a GPT disk) rather than only the first the engine finds.
+/// The ADR-0010 volume multiplexer: it surfaces each volume of a disk image as a
+/// `<volume>/` subdirectory under a synthetic root (`_partition<N>`, a wired
+/// label, or `root` for a bare unpartitioned filesystem — see
+/// [`volume_dir_name`]), so an analyst reaches every filesystem (e.g. both the
+/// FAT EFI System Partition *and* the NTFS Windows volume of a GPT disk) rather
+/// than only the first the engine finds, at a constant `<mount>/<volume>/…`
+/// depth even for a single-filesystem image.
 ///
-/// Each partition is a mounted [`EngineFs`]; the multiplexer keeps a dense
+/// Each volume is a mounted [`EngineFs`]; the multiplexer keeps a dense
 /// `(partition, inner inode) -> global inode` map so partition inode spaces stay
 /// disjoint. A `partition << 48` bit-pack would be simpler but overflows the FUSE
 /// mount layer's `ro_ino` (backend `+ 1000`) / `decode_fuse_ino` namespace
@@ -509,7 +622,8 @@ pub struct MultiPartitionFs {
     /// before `_tmp` so its open handles drop before the temp image is unlinked
     /// (correct on Windows).
     parts: Vec<EngineFs>,
-    /// The `pN-<kind>` label for each partition (parallel to `parts`).
+    /// The ADR-0010 `<volume>/` directory name for each partition (parallel to
+    /// `parts`) — `_partition<N>`, a wired label, or `root`.
     labels: Vec<Vec<u8>>,
     /// Dense `(partition, inner inode) -> global inode` and its inverse.
     fwd: HashMap<(usize, u64), u64>,

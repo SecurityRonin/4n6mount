@@ -66,11 +66,11 @@ fn open_image_all_on_missing_path_errors() {
 /// ADR-0010: a **bare, unpartitioned** filesystem renders as exactly one
 /// `<volume>/` directory named `root` (no volume-table `Layer::Volume`, no label
 /// wired), and a real file is readable through `<root>/…`. Uses the committed
-/// `tests/data/exfat.img` fixture, so it runs in CI with no external data.
+/// `tests/data/hfsplus.img` fixture, so it runs in CI with no external data.
 #[test]
 fn open_image_all_bare_volume_renders_single_root_dir() {
-    let img = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/data/exfat.img");
-    let mut fs = open_image_all(&img).expect("open_image_all must mount the bare exFAT fixture");
+    let img = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/data/hfsplus.img");
+    let mut fs = open_image_all(&img).expect("open_image_all must mount the bare HFS+ fixture");
     let root = fs.root_ino();
 
     let entries = fs.read_dir(root).expect("read_dir(root) must succeed");
@@ -285,8 +285,8 @@ fn e2e_multipartition_surfaces_ntfs() {
                         "read_file returned empty for {child_path:?}"
                     );
                     eprintln!(
-                        "e2e: VERIFIED NTFS file {child_path:?} through /pN — read {} bytes == \
-                         metadata size (first bytes: {:02x?})",
+                        "e2e: VERIFIED NTFS file {child_path:?} through <volume>/ — read {} bytes \
+                         == metadata size (first bytes: {:02x?})",
                         bytes.len(),
                         &bytes[..bytes.len().min(16)],
                     );
