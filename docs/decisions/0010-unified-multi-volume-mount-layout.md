@@ -14,7 +14,7 @@ tree had to special-case the two shapes, and the `pN-<kind>` name leaked an
 internal mechanism (the engine's filesystem probe) into the path.
 
 The FUSE layer (`src/fusefs.rs`) compounded this: the synthetic `$Orphans/`,
-`journal/`, and `metadata/` directories live at the FUSE **root** on the
+`$Journal/`, and `$Metadata/` directories live at the FUSE **root** on the
 single-volume assumption, so on a multi-volume disk they cannot be attributed to
 the volume they describe.
 
@@ -104,7 +104,7 @@ determines where the overlay dirs (`ro/`, `rw/`, `session/`) sit relative to
 
 - Single-volume disk images now render under `<mount>/<volume>/root/…` rather
   than `<mount>/<fs tree>` — the deliberate unification. Until §4 lands, the
-  FUSE-root `$Orphans/` / `journal/` / `metadata/` surfaces that a single-volume
+  FUSE-root `$Orphans/` / `$Journal/` / `$Metadata/` surfaces that a single-volume
   mount previously drove from the top `ForensicFs` are not re-attributed
   per-volume; that is the pending follow-up, not a silent loss (the recovered
   data is still reachable through the wired `deleted_nodes()` once §4 renders it).

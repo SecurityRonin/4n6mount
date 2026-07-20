@@ -1,4 +1,4 @@
-# 7. `journal/` and `metadata/timeline.jsonl` materialize lazily, on first read
+# 7. `$Journal/` and `$Metadata/timeline.jsonl` materialize lazily, on first read
 
 Date: 2026-07-19
 Status: Proposed (design accepted for review — not yet implemented)
@@ -7,10 +7,10 @@ Status: Proposed (design accepted for review — not yet implemented)
 
 Two mount surfaces are *derived artifacts*, not views of existing bytes:
 
-- **`journal/`** — decoded filesystem-journal transactions. Real cost: parse NTFS
+- **`$Journal/`** — decoded filesystem-journal transactions. Real cost: parse NTFS
   `$LogFile` (and, a distinct source, `$UsnJrnl`) or ext4 jbd2 and render typed
   transaction records.
-- **`metadata/timeline.jsonl`** — a super-timeline of per-file MACB events (plus
+- **`$Metadata/timeline.jsonl`** — a super-timeline of per-file MACB events (plus
   journal events where available), one JSON object per line.
 
 The shipped code already computes them on first *directory access* (the
@@ -21,7 +21,7 @@ The shipped code already computes them on first *directory access* (the
    listing (`Err(_) => Vec::new()`, `fusefs.rs:208`); `timeline()` errors become an
    empty `timeline.jsonl`; `fs_info()` errors become `{}`. Since the engine adapter
    currently returns loud `NotSupported` for journal and timeline, **the shipped
-   `journal/` is always empty and `timeline.jsonl` is always zero bytes** — rendered
+   `$Journal/` is always empty and `timeline.jsonl` is always zero bytes** — rendered
    exactly like a filesystem with no journal and no files, the fail-loud violation.
 2. **Results are RAM-buffered** (`Vec<u8>` per artifact), unbounded by design.
 3. **The contract cannot feed them**: the forensic-vfs 0.4 `FileSystem` trait has no
@@ -30,8 +30,8 @@ The shipped code already computes them on first *directory access* (the
 
 ## Decision
 
-1. **Lazy, single-flight, per-artifact materialization.** Listing `journal/` or
-   `metadata/` is free (names only). The first `getattr`/`open` of an artifact file
+1. **Lazy, single-flight, per-artifact materialization.** Listing `$Journal/` or
+   `$Metadata/` is free (names only). The first `getattr`/`open` of an artifact file
    triggers its materializer, guarded so concurrent readers block on one computation
    (session-scoped once-cell per artifact). Subsequent reads serve the cache.
 2. **Spill to disk, not RAM.** Materialized artifacts are written to the overlay
@@ -43,7 +43,7 @@ The shipped code already computes them on first *directory access* (the
    `EIO` and records the reason; it never produces an empty artifact.
    `metadata/capabilities.json` (cheap, computed at mount from the reader's
    capability surface) states which artifacts this filesystem/reader supports and why
-   absent ones are absent. `journal/` **appears only when the reader reports journal
+   absent ones are absent. `$Journal/` **appears only when the reader reports journal
    support**; an empty-but-present artifact means a *successful* decode that found
    zero records — absence and emptiness are never conflated.
 4. **The timeline describes the EVIDENCE, never the overlay.** ADR 0004's writable
@@ -59,7 +59,7 @@ The shipped code already computes them on first *directory access* (the
      so the timeline can linear-scan an MFT/inode table instead of a recursive
      `read_dir` walk. Optional optimization: a MACB timeline is *derivable today*
      from walk + `meta().times` (`MacbTimes` is already in `FsMeta`) and v2 ships
-     that first; `journal/` genuinely blocks on the `journal()` accessor.
+     that first; `$Journal/` genuinely blocks on the `journal()` accessor.
 
 ## Consequences
 
@@ -70,7 +70,7 @@ The shipped code already computes them on first *directory access* (the
   report a true size. This surprise is documented in the README and softened by the
   banner. The rejected alternative — reporting size 0 until first open — breaks
   `cp`/tools that pre-allocate from stat, a worse lie.
-- Until `journal()` ships in forensic-vfs, disk mounts carry **no `journal/`
+- Until `journal()` ships in forensic-vfs, disk mounts carry **no `$Journal/`
   directory** and `capabilities.json` says why — versus today's always-empty one.
   This is the honest regression-shaped change: less advertised surface, zero lies.
 - `timeline.jsonl` stays machine-faithful (JSONL, verbatim values, no truncation),
@@ -79,7 +79,7 @@ The shipped code already computes them on first *directory access* (the
 ## Residuals / open questions
 
 - **Materialization progress**: a multi-minute timeline build behind a blocking
-  `open` gives no feedback. Options (status file in `metadata/`, log line, partial
+  `open` gives no feedback. Options (status file in `$Metadata/`, log line, partial
   streaming) are implementation detail; v2 minimally logs start/finish to stderr.
 - **Bomb-guards**: the walk and journal decode need the `ENUM_CAP`-style caps from
   ADR 0006, plus a disk-space cap for the spill (fail loud when exceeded, stating
