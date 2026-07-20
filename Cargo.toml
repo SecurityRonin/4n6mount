@@ -39,13 +39,13 @@ forensic-vfs-engine = { version = "0.1", path = "../forensic-vfs-engine" }
 # The `FileSystem` navigation contract + its `Fs*` value types. Registry version
 # (not a path dep) so it unifies with the copy the engine links — a path dep
 # would compile a second, incompatible `DynFs`/`FileId`.
-forensic-vfs = "0.5"
+forensic-vfs = "0.7"
 # The generic layer resolver's `resolve_to_source()` (ADR 0011) — peels a wrapped
 # memory dump (memory.zip / memory.dd.gz / dump.7z) down to its raw byte edge
 # before memf reads it. Only the memory mount needs it; already in the graph via
 # the engine, so this is a zero-cost direct handle. Registry version so it unifies
-# with the engine's copy (both resolve to the published forensic-vfs-resolver 0.2).
-forensic-vfs-resolver = { version = "0.2", optional = true }
+# with the engine's copy (both resolve to the published forensic-vfs-resolver 0.3).
+forensic-vfs-resolver = { version = "0.3", optional = true }
 # Archive-layer reader: transparently peels a gzip/bzip2/xz compression wrapper
 # (evidence.dd.gz -> dd) before the engine opens the inner image. The `vfs`
 # feature exposes `ArchiveOpener` (the forensic-vfs ArchiveOpen impl) so the

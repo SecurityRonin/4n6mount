@@ -163,10 +163,11 @@ const MAX_DEPTH: u32 = 8;
 const MAX_READ_SIZE: u64 = 16 * 1024 * 1024;
 
 /// Drive `open_image_all` against a real multi-partition image: assert several
-/// `_partition<N>` volumes surface under the synthetic root, locate the NTFS
-/// volume, prove its root carries NTFS markers, and read a real regular file
-/// from it back — non-empty, size-matched — proving the NTFS vfs adapter is
-/// reachable via the ADR-0010 `<volume>/` layout.
+/// volumes surface under the synthetic root (each a valid `<volume>/` name — a
+/// live filesystem label like `System Reserved`, or the `_partition<N>`
+/// fallback), locate the NTFS volume, prove its root carries NTFS markers, and
+/// read a real regular file from it back — non-empty, size-matched — proving the
+/// NTFS vfs adapter is reachable via the ADR-0010 `<volume>/` layout.
 ///
 /// Env-gated on `FN_E2E_IMAGE`; skips cleanly when unset or the file is absent.
 #[test]
@@ -202,12 +203,32 @@ fn e2e_multipartition_surfaces_ntfs() {
         parts.len() >= 2,
         "a multi-partition disk must surface >= 2 partitions, saw {part_names:?}"
     );
-    // ADR-0010: a GPT disk with no volume labels wired renders each volume as
-    // `_partition<index+1>` (never the old `p1-fat`/`p2-ntfs` kind-tagged form).
+    // ADR-0010 + the live `volume_label()` hook: each volume renders as its
+    // filesystem label when the reader extracts one (NTFS `$VOLUME_NAME`, e.g.
+    // Case-001 DC01's `System Reserved`), else the positional `_partition<N>`
+    // fallback, else `root` for a bare volume. Assert each name is a VALID
+    // volume-dir-name — never empty (the old blanket `_partition` prefix no
+    // longer holds now that labels light up).
     for n in &part_names {
         assert!(
-            n.starts_with("_partition"),
-            "each volume of a label-less GPT disk must be named `_partitionN`, saw {n:?}"
+            !n.is_empty(),
+            "a volume dir name must never be empty, saw {part_names:?}"
+        );
+    }
+    // Exact, TSK-oracle-derived names for a KNOWN image, when supplied. Derive
+    // each with `fsstat -f ntfs -o <offset> <image>` -> `Volume Name` (unlabeled
+    // -> `_partition<index+1>`) and pass them comma-separated, in order. This is
+    // the load-bearing showcase assertion — e.g. for Case-001 DC01:
+    //   FN_E2E_EXPECT_PARTS="System Reserved,_partition2"
+    if let Some(expect) = std::env::var_os("FN_E2E_EXPECT_PARTS") {
+        let expected: Vec<String> = expect
+            .to_string_lossy()
+            .split(',')
+            .map(|s| s.trim().to_string())
+            .collect();
+        assert_eq!(
+            part_names, expected,
+            "volume dir names must match the TSK-oracle-derived expectation"
         );
     }
     for e in &parts {

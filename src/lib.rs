@@ -258,7 +258,7 @@ pub fn open_memory_provider(
         forensic_vfs::adapters::FileSource::open(image)
             .map_err(|e| bad(format!("cannot open memory dump {}: {e}", image.display())))?,
     );
-    let base_spec = forensic_vfs::PathSpec::os(image);
+    let base_spec = forensic_vfs::Locator::file(image);
 
     // A memory dump's only packaging is an archive or compression wrapper
     // (memory.zip / .gz / .7z / .tar, nested) — it is a flat page stream, never a

@@ -22,7 +22,7 @@ use std::io;
 use std::path::{Path, PathBuf};
 
 use forensic_vfs::{
-    Allocation, DynFs, FileId, Layer, MacbTimes, NodeKind, PathSpec, StreamId, TimeStamp,
+    Allocation, DynFs, FileId, Layer, Locator, MacbTimes, NodeKind, StreamId, TimeStamp,
     TimeZonePolicy, VfsError,
 };
 use forensic_vfs_engine::Vfs;
@@ -414,9 +414,9 @@ pub fn open_image_all(path: &Path) -> io::Result<Box<dyn ForensicFs + Send>> {
     let evidences = Vfs::new()
         .open_all(&image)
         .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e.to_string()))?;
-    // Keep each evidence's locator (its `PathSpec`) alongside the mounted fs — the
+    // Keep each evidence's locator (its `Locator`) alongside the mounted fs — the
     // `Layer::Volume { index }` in that chain drives the `_partition<N>` naming.
-    let pairs: Vec<(PathSpec, DynFs)> = evidences
+    let pairs: Vec<(Locator, DynFs)> = evidences
         .into_iter()
         .filter_map(|e| e.fs.map(|fs| (e.root, fs)))
         .collect();
@@ -438,8 +438,7 @@ pub fn open_image_all(path: &Path) -> io::Result<Box<dyn ForensicFs + Send>> {
     let mut labels = Vec::with_capacity(pairs.len());
     let mut used: std::collections::HashSet<String> = std::collections::HashSet::new();
     for (spec, fs) in pairs {
-        // The label HOOK — `None` today (no leaf accessor exposes a volume label);
-        // when one lands, this is the single place the name lights up.
+        // The label HOOK — the single place a wired volume label lights up.
         let label = volume_label(&spec, &fs);
         let name = volume_dir_name(volume_index(&spec), label, &used);
         used.insert(name.clone());
@@ -450,20 +449,20 @@ pub fn open_image_all(path: &Path) -> io::Result<Box<dyn ForensicFs + Send>> {
 }
 
 /// The volume-label HOOK for a resolved evidence (ADR-0010 naming precedence,
-/// step 1). It returns `None` **today**: no leaf accessor exposes a volume label
-/// — `forensic_vfs::FileSystem` has none, and [`EngineFs::fs_info`] reports the
-/// filesystem *kind*, not a label. This is the ONE place volume-label extraction
-/// lights up when such an accessor lands; until then every disk falls through to
-/// the `_partition<N>` / `root` steps below.
-#[allow(clippy::unnecessary_wraps)] // signature is the hook; it will return Some once wired.
-fn volume_label(_spec: &PathSpec, _fs: &DynFs) -> Option<String> {
-    None
+/// step 1). It reads the mounted filesystem's own label via the
+/// [`forensic_vfs::FileSystem::volume_label`] accessor (NTFS `$VOLUME_NAME`,
+/// FAT/exFAT label, ext4 `s_volume_name`, APFS volume name) — e.g. a Windows
+/// disk's `System Reserved` partition. `None` when the volume is unlabeled or
+/// the reader does not extract one, in which case [`volume_dir_name`] falls
+/// through to the `_partition<N>` / `root` steps.
+fn volume_label(_spec: &Locator, fs: &DynFs) -> Option<String> {
+    fs.volume_label()
 }
 
 /// The `Layer::Volume { index }` in an evidence's locator chain, if any. A bare
 /// (unpartitioned) filesystem's chain has no `Volume` layer, so this is `None`
 /// and the volume renders as `root`.
-fn volume_index(spec: &PathSpec) -> Option<usize> {
+fn volume_index(spec: &Locator) -> Option<usize> {
     spec.layers().into_iter().find_map(|l| match l {
         Layer::Volume { index, .. } => Some(*index),
         _ => None,
