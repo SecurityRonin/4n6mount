@@ -39,3 +39,7 @@ commit_parsers = [
     { message = "^chore", skip = true },
     { message = "^.*", group = "other" },
 ]
+
+[[package]]
+name = "forensic-mount"
+release = false   # app-tier (ships the 4n6mount FUSE binary via installers); fleet path deps — ADR-0005
