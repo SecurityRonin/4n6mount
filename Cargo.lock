@@ -1279,7 +1279,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "39cab71617ae0d63f51a36d69f866391735b51691dbda63cf6f96d042b63efeb"
 dependencies = [
  "libc",
- "windows-sys 0.61.2",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -1458,7 +1458,7 @@ dependencies = [
  "libc",
  "md-5",
  "memf-core",
- "memf-format 0.3.0",
+ "memf-format",
  "memf-linux",
  "memf-session",
  "memf-symbols",
@@ -2280,7 +2280,7 @@ dependencies = [
  "bytemuck",
  "lru 0.16.4",
  "lzo",
- "memf-format 0.3.0",
+ "memf-format",
  "memf-symbols",
  "memmap2",
  "png",
@@ -2304,23 +2304,6 @@ dependencies = [
 
 [[package]]
 name = "memf-format"
-version = "0.2.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "72b04138d39f0071ce095cae48edd16fd7e63fc41df9509a56eea394acdc76a5"
-dependencies = [
- "flate2",
- "goblin",
- "inventory",
- "lru 0.16.4",
- "memmap2",
- "rust-lzxpress",
- "ruzstd",
- "snap",
- "thiserror 2.0.19",
-]
-
-[[package]]
-name = "memf-format"
 version = "0.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2c8eff056c0df5582ae7cdec9222421b0434a4f9f7704d4fcc5dd42b76d25eb6"
@@ -2338,16 +2321,16 @@ dependencies = [
 
 [[package]]
 name = "memf-linux"
-version = "0.3.0"
+version = "0.3.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "57c055ce423e7cf8ec6822304e4cfc71a85f26d68793ab958dfe8a038f11cabd"
+checksum = "59aeb191bc3fb60fd429c1b1a7ff36a2dc7b862d0efa4f85fee28b3d320edfb7"
 dependencies = [
  "forensicnomicon",
  "goblin",
  "inventory",
  "memf-core",
  "memf-correlate",
- "memf-format 0.2.1",
+ "memf-format",
  "memf-symbols",
  "serde",
  "thiserror 2.0.19",
@@ -2355,12 +2338,12 @@ dependencies = [
 
 [[package]]
 name = "memf-session"
-version = "0.3.0"
+version = "0.3.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "921ada14ac2063617b6ec94469eb8baa32aa840e0cff1a3a43ca6dba3ad3d67f"
+checksum = "0121eae9b7d73a07cd601ef0537a4d8231926b2829ae7699131cd1e23702504c"
 dependencies = [
  "anyhow",
- "memf-format 0.2.1",
+ "memf-format",
  "memf-linux",
  "memf-symbols",
 ]
@@ -2372,7 +2355,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0e0eef946ab51bc65f0b47d97b7b76bbcce2f6051dd2ae0a091878596d1be90a"
 dependencies = [
  "goblin",
- "memf-format 0.3.0",
+ "memf-format",
  "pdb",
  "serde",
  "serde_json",
@@ -2398,7 +2381,7 @@ dependencies = [
  "md-5",
  "memf-core",
  "memf-correlate",
- "memf-format 0.3.0",
+ "memf-format",
  "memf-symbols",
  "pbkdf2",
  "prefetch-core",
@@ -3245,7 +3228,7 @@ dependencies = [
  "errno",
  "libc",
  "linux-raw-sys 0.12.1",
- "windows-sys 0.61.2",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -3706,7 +3689,7 @@ dependencies = [
  "getrandom 0.4.3",
  "once_cell",
  "rustix 1.1.4",
- "windows-sys 0.61.2",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -4390,7 +4373,7 @@ version = "0.1.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c2a7b1c03c876122aa43f3020e6c3c3ee5c05081c9a00739faf7503aeba10d22"
 dependencies = [
- "windows-sys 0.61.2",
+ "windows-sys 0.48.0",
 ]
 
 [[package]]
