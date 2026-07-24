@@ -303,3 +303,7 @@ This project builds on decades of work by the digital forensics community:
 ## License
 
 Apache-2.0
+
+---
+
+[Privacy Policy](https://securityronin.github.io/4n6mount/privacy/) · [Terms of Service](https://securityronin.github.io/4n6mount/terms/) · © 2026 Security Ronin Ltd
