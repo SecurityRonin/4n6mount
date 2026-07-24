@@ -16,34 +16,7 @@ url = "https://raw.githubusercontent.com/google/rust-crate-audits/main/audits.to
 [imports.mozilla]
 url = "https://raw.githubusercontent.com/mozilla/supply-chain/main/audits.toml"
 
-[policy."archive-core:0.1.3"]
-audit-as-crates-io = true
-
 [policy.forensic-mount]
-audit-as-crates-io = true
-
-[policy.forensic-vfs-engine]
-audit-as-crates-io = true
-
-[policy.memf-core]
-audit-as-crates-io = true
-
-[policy.memf-correlate]
-audit-as-crates-io = true
-
-[policy.memf-format]
-audit-as-crates-io = true
-
-[policy.memf-linux]
-audit-as-crates-io = true
-
-[policy.memf-session]
-audit-as-crates-io = true
-
-[policy.memf-symbols]
-audit-as-crates-io = true
-
-[policy.memf-windows]
 audit-as-crates-io = true
 
 [[exemptions.aead]]
@@ -107,7 +80,7 @@ version = "1.0.104"
 criteria = "safe-to-deploy"
 
 [[exemptions.apfs-core]]
-version = "0.2.5"
+version = "0.2.6"
 criteria = "safe-to-deploy"
 
 [[exemptions.apm-partition-core]]
@@ -259,7 +232,7 @@ version = "0.2.1"
 criteria = "safe-to-deploy"
 
 [[exemptions.cc]]
-version = "1.3.0"
+version = "1.4.0"
 criteria = "safe-to-deploy"
 
 [[exemptions.ccm]]
@@ -279,7 +252,7 @@ version = "0.5.2"
 criteria = "safe-to-deploy"
 
 [[exemptions.clap]]
-version = "4.6.2"
+version = "4.6.4"
 criteria = "safe-to-deploy"
 
 [[exemptions.clap_builder]]
@@ -287,7 +260,7 @@ version = "4.6.2"
 criteria = "safe-to-deploy"
 
 [[exemptions.clap_derive]]
-version = "4.6.1"
+version = "4.6.4"
 criteria = "safe-to-deploy"
 
 [[exemptions.clap_lex]]
@@ -463,7 +436,7 @@ version = "0.4.6"
 criteria = "safe-to-deploy"
 
 [[exemptions.ext4fs-core]]
-version = "0.2.5"
+version = "0.2.6"
 criteria = "safe-to-deploy"
 
 [[exemptions.fastrand]]
@@ -507,7 +480,7 @@ version = "0.7.0"
 criteria = "safe-to-deploy"
 
 [[exemptions.forensic-vfs-engine]]
-version = "0.1.4"
+version = "0.1.5"
 criteria = "safe-to-deploy"
 
 [[exemptions.forensic-vfs-resolver]]
@@ -571,7 +544,7 @@ version = "0.26.2"
 criteria = "safe-to-deploy"
 
 [[exemptions.glob]]
-version = "0.3.3"
+version = "0.3.4"
 criteria = "safe-to-deploy"
 
 [[exemptions.globset]]
@@ -635,7 +608,7 @@ version = "2.3.0"
 criteria = "safe-to-deploy"
 
 [[exemptions.ignore]]
-version = "0.4.30"
+version = "0.4.31"
 criteria = "safe-to-deploy"
 
 [[exemptions.indexmap]]
@@ -699,7 +672,7 @@ version = "0.2.5"
 criteria = "safe-to-deploy"
 
 [[exemptions.libc]]
-version = "0.2.186"
+version = "0.2.189"
 criteria = "safe-to-deploy"
 
 [[exemptions.libm]]
@@ -807,6 +780,10 @@ version = "0.3.0"
 criteria = "safe-to-deploy"
 
 [[exemptions.memf-format]]
+version = "0.2.1"
+criteria = "safe-to-deploy"
+
+[[exemptions.memf-format]]
 version = "0.3.0"
 criteria = "safe-to-deploy"
 
@@ -855,7 +832,7 @@ version = "0.29.0"
 criteria = "safe-to-deploy"
 
 [[exemptions.ntfs-core]]
-version = "0.9.5"
+version = "0.9.6"
 criteria = "safe-to-deploy"
 
 [[exemptions.num-bigint]]
@@ -1107,7 +1084,7 @@ version = "0.23.42"
 criteria = "safe-to-deploy"
 
 [[exemptions.rustls-pki-types]]
-version = "1.15.0"
+version = "1.15.1"
 criteria = "safe-to-deploy"
 
 [[exemptions.rustls-webpki]]
@@ -1159,7 +1136,7 @@ version = "1.0.229"
 criteria = "safe-to-deploy"
 
 [[exemptions.serde_json]]
-version = "1.0.150"
+version = "1.0.151"
 criteria = "safe-to-deploy"
 
 [[exemptions.serpent]]
@@ -1263,7 +1240,7 @@ version = "2.0.119"
 criteria = "safe-to-deploy"
 
 [[exemptions.syn]]
-version = "3.0.2"
+version = "3.0.3"
 criteria = "safe-to-deploy"
 
 [[exemptions.tar]]
@@ -1307,7 +1284,7 @@ version = "0.2.1"
 criteria = "safe-to-deploy"
 
 [[exemptions.time]]
-version = "0.3.53"
+version = "0.3.54"
 criteria = "safe-to-deploy"
 
 [[exemptions.time-core]]
@@ -1315,7 +1292,7 @@ version = "0.1.9"
 criteria = "safe-to-deploy"
 
 [[exemptions.time-macros]]
-version = "0.2.31"
+version = "0.2.32"
 criteria = "safe-to-deploy"
 
 [[exemptions.tiny-keccak]]
@@ -1603,7 +1580,7 @@ version = "0.1.5"
 criteria = "safe-to-deploy"
 
 [[exemptions.xpress-huffman]]
-version = "0.1.0"
+version = "0.1.1"
 criteria = "safe-to-deploy"
 
 [[exemptions.xts-mode]]
@@ -1611,7 +1588,7 @@ version = "0.5.1"
 criteria = "safe-to-deploy"
 
 [[exemptions.xxhash-rust]]
-version = "0.8.17"
+version = "0.8.18"
 criteria = "safe-to-deploy"
 
 [[exemptions.yansi]]
@@ -1635,11 +1612,11 @@ version = "0.12.0"
 criteria = "safe-to-deploy"
 
 [[exemptions.zerocopy]]
-version = "0.8.54"
+version = "0.8.55"
 criteria = "safe-to-deploy"
 
 [[exemptions.zerocopy-derive]]
-version = "0.8.54"
+version = "0.8.55"
 criteria = "safe-to-deploy"
 
 [[exemptions.zeroize]]

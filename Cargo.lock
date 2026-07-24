@@ -186,9 +186,9 @@ checksum = "330a5ed07fa54e4702c9d6c4174f74427fc0ef6e214bbd677ae50a5099946470"
 
 [[package]]
 name = "apfs-core"
-version = "0.2.5"
+version = "0.2.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "23690bde20276549adb31daa06c5a4c1b0d3360b5f637c1b96485241ad9d7c15"
+checksum = "6c5646c83cddb18f7abf571e50d53e238fabb496c1177517842a6ac0c47408e5"
 dependencies = [
  "bitflags 2.13.1",
  "chrono",
@@ -222,20 +222,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c3d036a3c4ab069c7b410a2ce876bd74808d2d0888a82667669f8e783a898bf1"
 dependencies = [
  "derive_arbitrary",
-]
-
-[[package]]
-name = "archive-core"
-version = "0.1.3"
-dependencies = [
- "bzip2-rs",
- "flate2",
- "forensic-vfs",
- "sevenz-rust2",
- "tar",
- "tempfile",
- "thiserror 2.0.19",
- "zip-forensic-core 0.2.0",
 ]
 
 [[package]]
@@ -630,9 +616,9 @@ dependencies = [
 
 [[package]]
 name = "cc"
-version = "1.3.0"
+version = "1.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c89588d05638b5b4594a3348a2d6c20277e43a7f5c5202b05cc56888475a47b8"
+checksum = "5add81bb678e6cb321aff7fa0dc7689ad82b112dbc032cea19f91d6b8e3582b9"
 dependencies = [
  "find-msvc-tools",
  "shlex",
@@ -699,9 +685,9 @@ dependencies = [
 
 [[package]]
 name = "clap"
-version = "4.6.2"
+version = "4.6.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "dd059f9da4f5c36b3787f65d38ccaab1cc315f07b01f89abc8359ee6a8205011"
+checksum = "d91e0c145792ef73a6ad36d27c75ac09f1832222a3c209689d90f534685ee5b7"
 dependencies = [
  "clap_builder",
  "clap_derive",
@@ -721,14 +707,14 @@ dependencies = [
 
 [[package]]
 name = "clap_derive"
-version = "4.6.1"
+version = "4.6.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f2ce8604710f6733aa641a2b3731eaa1e8b3d9973d5e3565da11800813f997a9"
+checksum = "d012d2b9d65aca7f18f4d9878a045bc17899bba951561ba5ec3c2ba1eed9a061"
 dependencies = [
  "heck",
  "proc-macro2",
  "quote",
- "syn 2.0.119",
+ "syn 3.0.3",
 ]
 
 [[package]]
@@ -1316,15 +1302,16 @@ dependencies = [
 
 [[package]]
 name = "ext4fs-core"
-version = "0.2.5"
+version = "0.2.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "fe5dd33a954871944f5469c298bf56ba9ca6b2f699d712cd72cbe04a1aabbbcb"
+checksum = "2e36f645a667a404a42457a4c260d07514cbad80f7e828047b50f47074648ce3"
 dependencies = [
  "bitflags 2.13.1",
  "blazehash-core",
  "crc",
  "forensic-vfs",
  "forensicnomicon",
+ "safe-read",
 ]
 
 [[package]]
@@ -1460,7 +1447,7 @@ checksum = "77ce24cb58228fbb8aa041425bb1050850ac19177686ea6e0f41a70416f56fdb"
 name = "forensic-mount"
 version = "0.5.0"
 dependencies = [
- "archive-core 0.1.3",
+ "archive-core",
  "clap",
  "dokan",
  "flate2",
@@ -1471,7 +1458,7 @@ dependencies = [
  "libc",
  "md-5",
  "memf-core",
- "memf-format",
+ "memf-format 0.3.0",
  "memf-linux",
  "memf-session",
  "memf-symbols",
@@ -1498,12 +1485,14 @@ dependencies = [
 
 [[package]]
 name = "forensic-vfs-engine"
-version = "0.1.4"
+version = "0.1.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "eb08b38c61c2e16cf0bdb5ddddc661aa6f4616267a9bb25a3c7671ef32e41979"
 dependencies = [
  "aff4",
  "apfs-core",
  "apm-partition-core",
- "archive-core 0.1.3 (registry+https://github.com/rust-lang/crates.io-index)",
+ "archive-core",
  "bitlocker-core",
  "btrfs-core",
  "dmg-core",
@@ -1691,9 +1680,9 @@ dependencies = [
 
 [[package]]
 name = "glob"
-version = "0.3.3"
+version = "0.3.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0cc23270f6e1808e30a928bdc84dea0b9b4136a8bc82338574f23baf47bbd280"
+checksum = "e4eba85ea1d0a966a983acd07deee566e67395d2d96b6fb39e62b5a833f1eb0b"
 
 [[package]]
 name = "globset"
@@ -1909,9 +1898,9 @@ checksum = "b9e0384b61958566e926dc50660321d12159025e767c18e043daf26b70104c39"
 
 [[package]]
 name = "ignore"
-version = "0.4.30"
+version = "0.4.31"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7b009b6744c1445efd7244084e25e498636412effb6760b55067553baa925cc7"
+checksum = "7f8a7b8211e695a1d0cd91cace480d4d0bd57667ab10277cc412c5f7f4884f83"
 dependencies = [
  "crossbeam-deque",
  "globset",
@@ -2066,9 +2055,9 @@ checksum = "34b357333733e8260735ba5894eb928c02ecc69c78715f01a8019e7fa7f2db4c"
 
 [[package]]
 name = "libc"
-version = "0.2.186"
+version = "0.2.189"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "68ab91017fe16c622486840e4c83c9a37afeff978bd239b5293d61ece587de66"
+checksum = "3eaf3ede3fee6db1a4c2ee091bf8a8b4dccdc6d17f656fb07896ee72867612f2"
 
 [[package]]
 name = "libm"
@@ -2104,7 +2093,7 @@ checksum = "77060ebe535362c3da75682cd17b0431017b6e7c5661e714fc69a7ad017d1301"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn 3.0.2",
+ "syn 3.0.3",
 ]
 
 [[package]]
@@ -2284,12 +2273,14 @@ checksum = "cf8baf1c55e62ffcace7a9f06f4bd9cd3f0c4beb022d3b367256b91b87513d98"
 
 [[package]]
 name = "memf-core"
-version = "0.2.2"
+version = "0.2.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0436ef3d5853012a75454f7c7e97315125d37e936d3d45adf590ca86941f4756"
 dependencies = [
  "bytemuck",
  "lru 0.16.4",
  "lzo",
- "memf-format",
+ "memf-format 0.3.0",
  "memf-symbols",
  "memmap2",
  "png",
@@ -2301,6 +2292,8 @@ dependencies = [
 [[package]]
 name = "memf-correlate"
 version = "0.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e99d551e51192e4cf1ffe6210f700f280234133973eca1d826acfcdf28d63e9e"
 dependencies = [
  "chrono",
  "forensicnomicon",
@@ -2311,7 +2304,26 @@ dependencies = [
 
 [[package]]
 name = "memf-format"
+version = "0.2.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "72b04138d39f0071ce095cae48edd16fd7e63fc41df9509a56eea394acdc76a5"
+dependencies = [
+ "flate2",
+ "goblin",
+ "inventory",
+ "lru 0.16.4",
+ "memmap2",
+ "rust-lzxpress",
+ "ruzstd",
+ "snap",
+ "thiserror 2.0.19",
+]
+
+[[package]]
+name = "memf-format"
 version = "0.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2c8eff056c0df5582ae7cdec9222421b0434a4f9f7704d4fcc5dd42b76d25eb6"
 dependencies = [
  "flate2",
  "goblin",
@@ -2327,13 +2339,15 @@ dependencies = [
 [[package]]
 name = "memf-linux"
 version = "0.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "57c055ce423e7cf8ec6822304e4cfc71a85f26d68793ab958dfe8a038f11cabd"
 dependencies = [
  "forensicnomicon",
  "goblin",
  "inventory",
  "memf-core",
  "memf-correlate",
- "memf-format",
+ "memf-format 0.2.1",
  "memf-symbols",
  "serde",
  "thiserror 2.0.19",
@@ -2342,19 +2356,23 @@ dependencies = [
 [[package]]
 name = "memf-session"
 version = "0.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "921ada14ac2063617b6ec94469eb8baa32aa840e0cff1a3a43ca6dba3ad3d67f"
 dependencies = [
  "anyhow",
- "memf-format",
+ "memf-format 0.2.1",
  "memf-linux",
  "memf-symbols",
 ]
 
 [[package]]
 name = "memf-symbols"
-version = "0.2.2"
+version = "0.2.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0e0eef946ab51bc65f0b47d97b7b76bbcce2f6051dd2ae0a091878596d1be90a"
 dependencies = [
  "goblin",
- "memf-format",
+ "memf-format 0.3.0",
  "pdb",
  "serde",
  "serde_json",
@@ -2364,7 +2382,9 @@ dependencies = [
 
 [[package]]
 name = "memf-windows"
-version = "0.3.0"
+version = "0.3.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5c8a519f215a9197e7f24195a0f9e524a1dee56937a3e831ed91a2846d010e0f"
 dependencies = [
  "aes 0.8.4",
  "aes-gcm",
@@ -2378,7 +2398,7 @@ dependencies = [
  "md-5",
  "memf-core",
  "memf-correlate",
- "memf-format",
+ "memf-format 0.3.0",
  "memf-symbols",
  "pbkdf2",
  "prefetch-core",
@@ -2493,9 +2513,9 @@ dependencies = [
 
 [[package]]
 name = "ntfs-core"
-version = "0.9.5"
+version = "0.9.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "21dd9d1962efbe385a681014859614b1a83acee719a3d1d4c73a022e0caa83ea"
+checksum = "0b8f79729ffbbb58bd52ab668f52982ed96e2b47c9c0b01b1921bb14b3066e75"
 dependencies = [
  "bitflags 2.13.1",
  "chrono",
@@ -3245,9 +3265,9 @@ dependencies = [
 
 [[package]]
 name = "rustls-pki-types"
-version = "1.15.0"
+version = "1.15.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "764899a24af3980067ee14bc143654f297b22eaebfe3c7b6b211920a5a59b046"
+checksum = "2f4925028c7eb5d1fcdaf196971378ed9d2c1c4efc7dc5d011256f76c99c0a96"
 dependencies = [
  "zeroize",
 ]
@@ -3366,14 +3386,14 @@ checksum = "e7a5d71263a5a7d47b41f6b3f06ba276f10cc18b0931f1799f710578e2309348"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn 3.0.2",
+ "syn 3.0.3",
 ]
 
 [[package]]
 name = "serde_json"
-version = "1.0.150"
+version = "1.0.151"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e8014e44b4736ed0538adeecded0fce2a272f22dc9578a7eb6b2d9993c74cfb9"
+checksum = "c841b55ecdae098c80dcae9cf767f6f8a0c2cdb3416bbef72181df4d0fe73f14"
 dependencies = [
  "indexmap 2.14.0",
  "itoa",
@@ -3634,9 +3654,9 @@ dependencies = [
 
 [[package]]
 name = "syn"
-version = "3.0.2"
+version = "3.0.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a207d6d6a2b7fc470b80443726053f18a2481b7e1eee970597051596567987a3"
+checksum = "53e9bae58849f64dfa4f5d5ae372c8341f7305f82a3868709269343628b659a3"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -3741,7 +3761,7 @@ checksum = "43cbfe0cf76104d42a574802844187e84a305e531ed54455f11fbde0f10541cd"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn 3.0.2",
+ "syn 3.0.3",
 ]
 
 [[package]]
@@ -3755,9 +3775,9 @@ dependencies = [
 
 [[package]]
 name = "time"
-version = "0.3.53"
+version = "0.3.54"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "18dfaaeddcb932337b5e7866ee7d0ce9b76d2fd092997146f187ec09b4558a50"
+checksum = "3e1d5e639ff6bab73cb6885cc7e7b1de96c3f32c68ec55f3952614bec1092244"
 dependencies = [
  "deranged",
  "num-conv",
@@ -3775,9 +3795,9 @@ checksum = "9e1c906769ad99c88eaa54e728060edef082f8e358ff32030cb7c7d315e81109"
 
 [[package]]
 name = "time-macros"
-version = "0.2.31"
+version = "0.2.32"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c431b87111666e491a90baa837f914fb45cd5dc3c268591b0220ff5057f2085f"
+checksum = "7e689342a48d2ea927c87ea50cabf8594854bf940e9310208848d680d668ed85"
 dependencies = [
  "num-conv",
  "time-core",
@@ -4688,9 +4708,9 @@ dependencies = [
 
 [[package]]
 name = "xpress-huffman"
-version = "0.1.0"
+version = "0.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7db36564308ced066dfa8972d844e85647f9c3588c57a1cecda89f76e8700907"
+checksum = "c8cdb7ef0846aa455e4605e104f0d402fd43ce8c6c322746bb31a18a1bb39702"
 
 [[package]]
 name = "xts-mode"
@@ -4704,9 +4724,9 @@ dependencies = [
 
 [[package]]
 name = "xxhash-rust"
-version = "0.8.17"
+version = "0.8.18"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "985eec839aaf2a1270af8f4ebcf63cf9401cfd90f0902f97c28d9f104ffbde72"
+checksum = "aee1b19627c7c60102ab80d3a9cbe18de90bfe03bfa6c3715447681f0e8c8af6"
 
 [[package]]
 name = "yansi"
@@ -4821,18 +4841,18 @@ dependencies = [
 
 [[package]]
 name = "zerocopy"
-version = "0.8.54"
+version = "0.8.55"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b7cbbc0a705a0fd05cc3676525980d2bf5a9bc4adac6d6475209a7887cf59d19"
+checksum = "b5a105cd7b140f6eeec8acff2ea38135d3cab283ada58540f629fe51e46696eb"
 dependencies = [
  "zerocopy-derive",
 ]
 
 [[package]]
 name = "zerocopy-derive"
-version = "0.8.54"
+version = "0.8.55"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e2e817b7b52d0c7358d3246da9d69935ebb18116b2b102b4230dac079b4862f5"
+checksum = "0fe976fb70c78cd64cccfe3a6fc142244e8a77b70959b30faf9d0ac37ee228eb"
 dependencies = [
  "proc-macro2",
  "quote",

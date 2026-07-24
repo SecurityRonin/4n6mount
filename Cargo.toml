@@ -2,7 +2,7 @@
 name = "forensic-mount"
 version = "0.5.0"
 edition = "2021"
-rust-version = "1.88"
+rust-version = "1.93"
 description = "Mount forensic disk images, archives, and memory dumps as a filesystem on Linux, macOS, and Windows — ext4/NTFS/exFAT/HFS+/APFS/ISO, EWF/VMDK containers, zip/7z/tar, LiME/AVML/crash dumps"
 license = "Apache-2.0"
 repository = "https://github.com/SecurityRonin/4n6mount"
@@ -35,7 +35,11 @@ memory = ["dep:memf-format", "dep:memf-core", "dep:memf-session", "dep:memf-symb
 clap = { version = "4", features = ["derive"] }
 # The forensic VFS engine: the partition-aware `Vfs::open()` entry point that
 # detects the container/volume/filesystem stack and mounts a `dyn FileSystem`.
-forensic-vfs-engine = { version = "0.1", path = "../forensic-vfs-engine" }
+# Requires >= 0.1.5: engine 0.1.4 links forensic-vfs 0.4, which does NOT unify
+# with the `forensic-vfs = "0.7"` this crate pins (two incompatible `FileSystem`
+# traits -> E0277). Registry (not a path dep) so `cargo package`/release-plz can
+# resolve it in isolation and the whole fleet graph unifies on one version.
+forensic-vfs-engine = "0.1.5"
 # The `FileSystem` navigation contract + its `Fs*` value types. Registry version
 # (not a path dep) so it unifies with the copy the engine links — a path dep
 # would compile a second, incompatible `DynFs`/`FileId`.
@@ -50,14 +54,14 @@ forensic-vfs-resolver = { version = "0.3", optional = true }
 # (evidence.dd.gz -> dd) before the engine opens the inner image. The `vfs`
 # feature exposes `ArchiveOpener` (the forensic-vfs ArchiveOpen impl) so the
 # memory path can build an archive-only `Openers` for resolve_to_source.
-archive-core = { version = "0.1.0", path = "../archive-forensic/core", features = ["vfs"] }
+archive-core = { version = "0.1.0", features = ["vfs"] }
 tempfile = "3"
-memf-format = { version = "0.3", path = "../memory-forensic/crates/memf-format", optional = true }
-memf-core = { version = "0.2", path = "../memory-forensic/crates/memf-core", optional = true }
-memf-session = { version = "0.3", path = "../memory-forensic/crates/memf-session", optional = true }
-memf-symbols = { version = "0.2", path = "../memory-forensic/crates/memf-symbols", optional = true }
-memf-windows = { version = "0.3", path = "../memory-forensic/crates/memf-windows", optional = true }
-memf-linux = { version = "0.3", path = "../memory-forensic/crates/memf-linux", optional = true }
+memf-format = { version = "0.3", optional = true }
+memf-core = { version = "0.2", optional = true }
+memf-session = { version = "0.3", optional = true }
+memf-symbols = { version = "0.2", optional = true }
+memf-windows = { version = "0.3", optional = true }
+memf-linux = { version = "0.3", optional = true }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 sha2 = "0.10"
@@ -72,7 +76,7 @@ libc = "0.2"
 flate2 = "1"
 # The e2e_archive_read test drives the SAME archive reader the mount peels
 # evidence with (`archive_core::Archive`) against a real catalog .zip.
-archive-core = { version = "0.1.0", path = "../archive-forensic/core" }
+archive-core = { version = "0.1.0" }
 # The ADR-0011 memory-unarchive test wraps a synthetic dump in a real .zip to
 # prove the resolve_to_source -> adapt -> open_source chain reads the same pages.
 zip = { version = "2", default-features = false, features = ["deflate"] }

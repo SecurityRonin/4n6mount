@@ -30,6 +30,7 @@ allow = [
     # multi-format dependency surface (none are strong copyleft):
     "CC0-1.0",             # notify, tiny-keccak (public-domain dedication)
     "BSL-1.0",             # xxhash-rust (Boost Software License)
+    "bzip2-1.0.6",         # libbzip2 C lib bundled by bzip2 (via sevenz-rust2 -> archive-core, 7z decompression)
     "CDLA-Permissive-2.0", # webpki-roots (Mozilla CA bundle data license)
     "MPL-2.0",             # option-ext (file-level copyleft; does not affect this crate's license)
 ]
