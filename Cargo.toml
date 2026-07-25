@@ -56,6 +56,9 @@ forensic-vfs-resolver = { version = "0.3", optional = true }
 # memory path can build an archive-only `Openers` for resolve_to_source.
 archive-core = { version = "0.1.0", features = ["vfs"] }
 tempfile = "3"
+# Logical-container (FTK AD1 / AFF4-Logical / DAR) entry point — the sanctioned
+# fleet VFS-abstraction for file-tree images the raw-disk engine cannot mount.
+disk-forensic = "0.11"
 memf-format = { version = "0.3", optional = true }
 memf-core = { version = "0.2", optional = true }
 memf-session = { version = "0.3", optional = true }

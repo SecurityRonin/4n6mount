@@ -411,41 +411,74 @@ pub fn open_image_all(path: &Path) -> io::Result<Box<dyn ForensicFs + Send>> {
         None => (path.to_path_buf(), None),
     };
 
-    let evidences = Vfs::new()
-        .open_all(&image)
-        .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e.to_string()))?;
-    // Keep each evidence's locator (its `Locator`) alongside the mounted fs — the
-    // `Layer::Volume { index }` in that chain drives the `_partition<N>` naming.
-    let pairs: Vec<(Locator, DynFs)> = evidences
-        .into_iter()
-        .filter_map(|e| e.fs.map(|fs| (e.root, fs)))
-        .collect();
-
-    if pairs.is_empty() {
-        return Err(io::Error::new(
-            io::ErrorKind::InvalidData,
-            format!(
-                "no filesystem detected in {} (unsupported container/volume/filesystem, or empty image)",
-                image.display()
-            ),
-        ));
+    // A LOGICAL container (FTK AD1 / AFF4-Logical / DAR) is a file tree, not a
+    // disk with partitions — the engine cannot surface it as a browsable fs.
+    // Detect it first; it rejects a physical disk (incl. physical AFF4) as
+    // `NotLogical`, so those fall through to the engine below. A plain Zip can
+    // make the AFF4-Logical probe *error* (Zip magic, but no aff4 structure)
+    // rather than cleanly decline, so a probe failure is treated as "not logical
+    // here" and the engine/archive path takes over — a real archive still routes
+    // correctly, and a genuine logical container opens cleanly (`Ok(Some)`).
+    if let Ok(Some(fs)) = crate::synthetic_fs::try_open_logical(&image) {
+        return Ok(Box::new(fs.with_tmp(tmp)));
     }
 
-    // ADR-0010: wrap every image — one filesystem or many — in the volume
-    // multiplexer, so the layout is `<mount>/<volume>/<fs tree>` at constant
-    // depth. A single filesystem is just one `<volume>`.
-    let mut parts = Vec::with_capacity(pairs.len());
-    let mut labels = Vec::with_capacity(pairs.len());
-    let mut used: std::collections::HashSet<String> = std::collections::HashSet::new();
-    for (spec, fs) in pairs {
-        // The label HOOK — the single place a wired volume label lights up.
-        let label = volume_label(&spec, &fs);
-        let name = volume_dir_name(volume_index(&spec), label, &used);
-        used.insert(name.clone());
-        labels.push(name.into_bytes());
-        parts.push(EngineFs::new(fs, None));
+    // The engine handles raw disks, partitions, physical AFF4, and archives that
+    // wrap a nested disk image. An ARCHIVE of plain files, though, resolves to no
+    // filesystem — or is claimed by the Zip-framed AFF4 decoder and *errors* — so
+    // an archive fallback runs whenever the engine yields nothing usable.
+    match Vfs::new().open_all(&image) {
+        Ok(evidences) => {
+            // Keep each evidence's locator (its `Locator`) alongside the mounted
+            // fs — the `Layer::Volume { index }` in that chain drives the
+            // `_partition<N>` naming.
+            let pairs: Vec<(Locator, DynFs)> = evidences
+                .into_iter()
+                .filter_map(|e| e.fs.map(|fs| (e.root, fs)))
+                .collect();
+
+            if pairs.is_empty() {
+                if let Some(fs) = crate::synthetic_fs::try_open_archive(&image)? {
+                    return Ok(Box::new(fs.with_tmp(tmp)));
+                }
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    format!(
+                        "no filesystem detected in {} (unsupported container/volume/filesystem, or empty image)",
+                        image.display()
+                    ),
+                ));
+            }
+
+            // ADR-0010: wrap every image — one filesystem or many — in the volume
+            // multiplexer, so the layout is `<mount>/<volume>/<fs tree>` at
+            // constant depth. A single filesystem is just one `<volume>`.
+            let mut parts = Vec::with_capacity(pairs.len());
+            let mut labels = Vec::with_capacity(pairs.len());
+            let mut used: std::collections::HashSet<String> = std::collections::HashSet::new();
+            for (spec, fs) in pairs {
+                // The label HOOK — the single place a wired volume label lights up.
+                let label = volume_label(&spec, &fs);
+                let name = volume_dir_name(volume_index(&spec), label, &used);
+                used.insert(name.clone());
+                labels.push(name.into_bytes());
+                parts.push(EngineFs::new(fs, None));
+            }
+            Ok(Box::new(MultiPartitionFs::new(parts, labels, tmp)))
+        }
+        Err(engine_err) => {
+            // The engine rejected the image (e.g. the AFF4 decoder choking on a
+            // plain Zip). If it is a browsable archive, mount it; otherwise
+            // surface the engine's own diagnostic.
+            if let Some(fs) = crate::synthetic_fs::try_open_archive(&image)? {
+                return Ok(Box::new(fs.with_tmp(tmp)));
+            }
+            Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                engine_err.to_string(),
+            ))
+        }
     }
-    Ok(Box::new(MultiPartitionFs::new(parts, labels, tmp)))
 }
 
 /// The volume-label HOOK for a resolved evidence (ADR-0010 naming precedence,

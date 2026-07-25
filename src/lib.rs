@@ -25,6 +25,9 @@ pub mod mem;
 // `EngineFs` adapter over `forensic-vfs`). The engine now speaks a different,
 // inode-enum `FileSystem` trait; `EngineFs` bridges it into this one.
 pub mod engine_fs;
+// Read-only mount adapter for archive (zip/7z/tar) and logical (AD1/AFF4-Logical/
+// DAR) containers the raw-disk engine cannot surface as a browsable tree.
+mod synthetic_fs;
 pub mod types;
 
 pub use engine_fs::{open_image, open_image_all, EngineFs, MultiPartitionFs};
