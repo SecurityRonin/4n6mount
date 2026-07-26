@@ -488,7 +488,7 @@ version = "0.7.0"
 criteria = "safe-to-deploy"
 
 [[exemptions.forensic-vfs-engine]]
-version = "0.1.6"
+version = "0.1.7"
 criteria = "safe-to-deploy"
 
 [[exemptions.forensic-vfs-resolver]]
