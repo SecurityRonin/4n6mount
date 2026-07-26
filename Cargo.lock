@@ -1512,9 +1512,9 @@ dependencies = [
 
 [[package]]
 name = "forensic-vfs-engine"
-version = "0.1.6"
+version = "0.1.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "03e72d152c158b3e18702514a844c554c45d1ab82205581b5f6be05672f2cca1"
+checksum = "634ba222162104e677edf18f216df73bbeb556c7ee16244d44a844b5f2881952"
 dependencies = [
  "ad1-core",
  "aff4",

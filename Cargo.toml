@@ -43,7 +43,7 @@ clap = { version = "4", features = ["derive"] }
 # pins — two incompatible `FileSystem` traits -> E0277.) Registry (not a path dep)
 # so `cargo package`/release-plz can resolve it in isolation and the whole fleet
 # graph unifies on one version.
-forensic-vfs-engine = "0.1.6"
+forensic-vfs-engine = "0.1.7"
 # The `FileSystem` navigation contract + its `Fs*` value types. Registry version
 # (not a path dep) so it unifies with the copy the engine links — a path dep
 # would compile a second, incompatible `DynFs`/`FileId`.
