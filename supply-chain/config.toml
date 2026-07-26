@@ -19,6 +19,10 @@ url = "https://raw.githubusercontent.com/mozilla/supply-chain/main/audits.toml"
 [policy.forensic-mount]
 audit-as-crates-io = true
 
+[[exemptions.ad1-core]]
+version = "0.1.1"
+criteria = "safe-to-deploy"
+
 [[exemptions.aead]]
 version = "0.5.2"
 criteria = "safe-to-deploy"
@@ -355,6 +359,10 @@ criteria = "safe-to-deploy"
 version = "0.9.2"
 criteria = "safe-to-deploy"
 
+[[exemptions.dar-core]]
+version = "0.7.1"
+criteria = "safe-to-deploy"
+
 [[exemptions.darling]]
 version = "0.20.11"
 criteria = "safe-to-deploy"
@@ -480,7 +488,7 @@ version = "0.7.0"
 criteria = "safe-to-deploy"
 
 [[exemptions.forensic-vfs-engine]]
-version = "0.1.5"
+version = "0.1.7"
 criteria = "safe-to-deploy"
 
 [[exemptions.forensic-vfs-resolver]]
@@ -1092,11 +1100,19 @@ version = "1.0.23"
 criteria = "safe-to-deploy"
 
 [[exemptions.ruzstd]]
+version = "0.7.3"
+criteria = "safe-to-deploy"
+
+[[exemptions.ruzstd]]
 version = "0.8.3"
 criteria = "safe-to-deploy"
 
 [[exemptions.safe-read]]
 version = "0.1.0"
+criteria = "safe-to-deploy"
+
+[[exemptions.safe-read]]
+version = "0.2.1"
 criteria = "safe-to-deploy"
 
 [[exemptions.same-file]]
@@ -1309,6 +1325,10 @@ criteria = "safe-to-deploy"
 
 [[exemptions.twofish]]
 version = "0.7.1"
+criteria = "safe-to-deploy"
+
+[[exemptions.twox-hash]]
+version = "1.6.3"
 criteria = "safe-to-deploy"
 
 [[exemptions.twox-hash]]

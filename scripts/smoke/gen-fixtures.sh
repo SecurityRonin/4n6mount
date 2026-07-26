@@ -52,13 +52,13 @@ mkfs_with_file "$OUT/ntfs.img" "mkntfs -F -Q"    "-t ntfs-3g -o loop" "hello fro
 mkfs_with_file "$W/ewf-inner.raw" "mkfs.ext4 -F -q" "-o loop" "hello from ewf"
 ewfacquire -u -t "$OUT/test" -f encase6 -c deflate:none -S 1GiB "$W/ewf-inner.raw" >/dev/null 2>&1
 
-# --- VMDK: monolithicFlat (flat extent + text descriptor). vmdk-core does not
-# support compressed VMDKs (streamOptimized) and qemu's monolithicSparse tripped
-# its reader; monolithicFlat is the uncompressed flat layout it parses. This
-# emits test.vmdk (descriptor) + test-flat.vmdk (data) — both must travel
-# together, so the smoke mounts the descriptor and the flat file sits beside it. ---
+# --- VMDK: monolithicSparse (a single self-contained file). The engine hands
+# vmdk-core a byte-source, not a path, so a SINGLE-file subformat is required: a
+# monolithicFlat descriptor points at a sibling `-flat.vmdk` that the engine's
+# byte-source cannot resolve (the fs then reads as absent). monolithicSparse is
+# the uncompressed single-file sparse layout vmdk-core parses in one stream. ---
 mkfs_with_file "$W/vmdk-inner.raw" "mkfs.ext4 -F -q" "-o loop" "hello from vmdk"
-qemu-img convert -O vmdk -o subformat=monolithicFlat "$W/vmdk-inner.raw" "$OUT/test.vmdk"
+qemu-img convert -O vmdk -o subformat=monolithicSparse "$W/vmdk-inner.raw" "$OUT/test.vmdk"
 
 echo "=== minted fixtures in $OUT ==="
 ls -la "$OUT"

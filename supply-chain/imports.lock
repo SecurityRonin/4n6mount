@@ -633,6 +633,12 @@ but it's all doing what it says on the tin: being a stable polyfill for strict
 provenance APIs in the standard library while they're on Nightly.
 """
 
+[[audits.bytecode-alliance.audits.static_assertions]]
+who = "Andrew Brown <andrew.brown@intel.com>"
+criteria = "safe-to-deploy"
+version = "1.1.0"
+notes = "No dependencies and completely a compile-time crate as advertised. Uses `unsafe` in one module as a compile-time check only: `mem::transmute` and `ptr::write` are wrapped in an impossible-to-run closure."
+
 [[audits.bytecode-alliance.audits.vcpkg]]
 who = "Pat Hickey <phickey@fastly.com>"
 criteria = "safe-to-deploy"
