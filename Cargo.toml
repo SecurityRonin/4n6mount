@@ -35,11 +35,15 @@ memory = ["dep:memf-format", "dep:memf-core", "dep:memf-session", "dep:memf-symb
 clap = { version = "4", features = ["derive"] }
 # The forensic VFS engine: the partition-aware `Vfs::open()` entry point that
 # detects the container/volume/filesystem stack and mounts a `dyn FileSystem`.
-# Requires >= 0.1.5: engine 0.1.4 links forensic-vfs 0.4, which does NOT unify
-# with the `forensic-vfs = "0.7"` this crate pins (two incompatible `FileSystem`
-# traits -> E0277). Registry (not a path dep) so `cargo package`/release-plz can
-# resolve it in isolation and the whole fleet graph unifies on one version.
-forensic-vfs-engine = "0.1.5"
+# Requires >= 0.1.6: engine 0.1.6 (ADR-0014) surfaces archive (zip/7z/tar) and
+# logical (AD1/AFF4-Logical/DAR) containers as browsable `forensic_vfs::FileSystem`s
+# through `Vfs::open`/`open_all`, so the MultiPartitionFs path mounts them as one
+# `root` volume — no local SyntheticFs, no disk-forensic. (Engine 0.1.4 links
+# forensic-vfs 0.4, which does NOT unify with the `forensic-vfs = "0.7"` this crate
+# pins — two incompatible `FileSystem` traits -> E0277.) Registry (not a path dep)
+# so `cargo package`/release-plz can resolve it in isolation and the whole fleet
+# graph unifies on one version.
+forensic-vfs-engine = "0.1.6"
 # The `FileSystem` navigation contract + its `Fs*` value types. Registry version
 # (not a path dep) so it unifies with the copy the engine links — a path dep
 # would compile a second, incompatible `DynFs`/`FileId`.
