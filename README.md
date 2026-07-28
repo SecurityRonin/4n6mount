@@ -1,5 +1,15 @@
 # 4n6mount
 
+[![Crates.io](https://img.shields.io/crates/v/forensic-mount.svg)](https://crates.io/crates/forensic-mount)
+[![Docs.rs](https://docs.rs/forensic-mount/badge.svg)](https://docs.rs/forensic-mount)
+[![Rust 1.93+](https://img.shields.io/badge/rust-1.93+-orange.svg)](https://www.rust-lang.org)
+[![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
+[![Sponsor](https://img.shields.io/badge/sponsor-h4x0r-ea4aaa.svg)](https://github.com/sponsors/h4x0r)
+
+[![CI](https://github.com/SecurityRonin/4n6mount/actions/workflows/ci.yml/badge.svg)](https://github.com/SecurityRonin/4n6mount/actions/workflows/ci.yml)
+[![unsafe forbidden](https://img.shields.io/badge/unsafe-forbidden-success.svg)](https://github.com/rust-secure-code/safety-dance/)
+[![Security audit](https://img.shields.io/badge/security-cargo--deny%20%2B%20vet-4c1.svg)](deny.toml)
+
 **Mount forensic images as a filesystem. Browse evidence like files. Write without touching the original.**
 
 One command turns a forensic disk image — or an archive, or a **memory dump** — into a mounted filesystem with read-only evidence access, a writable copy-on-write overlay, deleted file recovery, forensic timelines, and hash-based filtering, all without modifying a single byte of the original. Disk filesystems (ext4, NTFS, exFAT, HFS+, APFS, ISO9660), EWF/VMDK/AFF4 containers, AccessData AD1 and AFF4-Logical images, zip/7z/tar archives, and memory dumps all mount through one command.
@@ -16,6 +26,13 @@ Forensic examiners spend too much time on tooling friction:
 4n6mount solves all of these. Mount once. Browse evidence in `ro/`. Run analysis tools against `rw/` (writes go to a sidecar, never the image). Filter out OS noise in `evidence/`. Everything in one mount, one command.
 
 ## Quick start
+
+Mounting uses the OS FUSE layer, so install the runtime for your platform first
+(package installs pull it automatically — the note is for the release tarballs):
+
+- **Linux** — `fuse3` (`apt install fuse3` / `dnf install fuse3`). The `.deb` declares it as a dependency.
+- **macOS** — [macFUSE](https://macfuse.github.io/) (`brew install --cask macfuse`). The Homebrew formula depends on the `macfuse` cask.
+- **Windows** — the [Dokany runtime](https://github.com/dokan-dev/dokany/releases) (driver + `dokan2.dll`).
 
 ```bash
 # Mount an ext4 image

@@ -3,6 +3,8 @@ name = "forensic-mount"
 version = "0.6.0"
 edition = "2021"
 rust-version = "1.93"
+# Required by cargo-deb (it errors without a copyright or authors property).
+authors = ["Albert Hui <albert@securityronin.com>"]
 description = "Mount forensic disk images, archives, and memory dumps as a filesystem on Linux, macOS, and Windows — ext4/NTFS/exFAT/HFS+/APFS/ISO, EWF/VMDK containers, zip/7z/tar, LiME/AVML/crash dumps"
 license = "Apache-2.0"
 repository = "https://github.com/SecurityRonin/4n6mount"
@@ -114,3 +116,18 @@ cast_sign_loss = "allow"
 too_many_lines = "allow"
 needless_pass_by_value = "allow"
 similar_names = "allow"
+
+# Debian package metadata (cargo-deb). The mount backend is FUSE, so the runtime
+# needs libfuse3 + fusermount3: `$auto` keeps cargo-deb's shlibdeps autodetection
+# (adds libfuse3-3) and we add `fuse3` explicitly so fusermount3 is guaranteed
+# present. Only the `4n6mount` binary ships; `mkdump` is a memory-feature example.
+[package.metadata.deb]
+depends = "$auto, fuse3"
+section = "utils"
+priority = "optional"
+extended-description = "Mount forensic disk images, archives, and memory dumps as a read-only filesystem with a copy-on-write overlay, deleted-file recovery, timelines, and hash filtering. Requires FUSE (fuse3) at runtime."
+assets = [
+    ["target/release/4n6mount", "usr/bin/", "755"],
+    ["README.md", "usr/share/doc/4n6mount/README.md", "644"],
+    ["LICENSE", "usr/share/doc/4n6mount/LICENSE", "644"],
+]

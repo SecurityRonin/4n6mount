@@ -1,0 +1,240 @@
+name: Release
+
+# Binary distribution for the `4n6mount` CLI. A signed `v[0-9]*` tag ships
+# per-platform executables (GitHub Release), Homebrew (shared tap), and apt/.deb
+# (GitHub Release + Cloudsmith).
+#
+# crates.io publishing of the `forensic-mount` library crate is NOT done here — it
+# is release-plz's job (see release-plz.yml). This repo is lib+CLI, so both run:
+# release-plz publishes the crate on merge to main; this `v[0-9]*` tag ships the
+# binary. Do not add a `cargo publish` job here (it would be a second, conflicting
+# publish path).
+#
+# FUSE-specific handling (this is the fleet's first FUSE binary release):
+#   - Linux uses GNU targets, NOT musl. `fuser` links libfuse3 at build time, which
+#     cannot be statically linked into a musl binary; native GNU runners + a
+#     documented `fuse3` runtime dependency is the honest, working shape.
+#   - macOS links against macFUSE (installed via the `macfuse` cask for the headers
+#     + pkg-config file; the kext is only needed at mount time, not to link).
+#   - Windows mounts via Dokan; `dokan-sys` self-compiles the Dokany usermode lib
+#     from vendored C, so the build needs no runtime install — but it MUST be a
+#     release build (dokan 0.3.1 panics in debug on a null Context reference). End
+#     users install the Dokany runtime separately, like macFUSE/fuse3.
+
+on:
+  push:
+    tags: ["v[0-9]*"]
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: aarch64-apple-darwin
+            os: macos-14
+          - target: x86_64-apple-darwin
+            os: macos-13
+          - target: x86_64-unknown-linux-gnu
+            os: ubuntu-latest
+          - target: aarch64-unknown-linux-gnu
+            os: ubuntu-24.04-arm
+          - target: x86_64-pc-windows-msvc
+            os: windows-latest
+    runs-on: ${{ matrix.os }}
+    environment: release
+    permissions:
+      id-token: write
+      contents: read
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+
+      - name: Set version
+        id: version
+        shell: bash
+        run: echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+
+      - uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable
+        with:
+          # Must match rust-toolchain.toml's pin: that file overrides the toolchain
+          # cargo uses, so the cross-target has to be installed onto the pinned
+          # version, not the action's default `stable`.
+          toolchain: 1.96.0
+          targets: ${{ matrix.target }}
+
+      - name: Install FUSE build deps (Linux)
+        if: runner.os == 'Linux'
+        # `fuser` links libfuse3 at build time (pkg-config probe), so the build host
+        # needs libfuse3-dev + pkg-config. Native runners (x86_64 + arm64) install
+        # their own-arch libfuse3-dev — no multiarch cross pain.
+        run: sudo apt-get update && sudo apt-get install -y libfuse3-dev pkg-config
+
+      - name: Install macFUSE + pkg-config (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          brew install --cask macfuse
+          brew install pkg-config
+          # macFUSE installs its pkg-config file under /usr/local regardless of the
+          # Homebrew prefix (it is a system package, not a formula).
+          echo "PKG_CONFIG_PATH=/usr/local/lib/pkgconfig:${PKG_CONFIG_PATH}" >> "$GITHUB_ENV"
+
+      - name: Build
+        run: cargo build --release --target ${{ matrix.target }}
+
+      - name: Azure login (OIDC)
+        if: runner.os == 'Windows'
+        uses: azure/login@93381592711f247e165c389ebb30b596c84cdc48 # v3.0.0
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+      - name: Sign Windows .exe (Azure Trusted Signing)
+        if: runner.os == 'Windows'
+        uses: azure/trusted-signing-action@208f8af4bf26cf2af8597424e3cb5582801523ba # v2.0.0
+        with:
+          endpoint: https://neu.codesigning.azure.net
+          trusted-signing-account-name: securityronin
+          certificate-profile-name: securityronin-public
+          files-folder: target/${{ matrix.target }}/release
+          files-folder-filter: exe
+          file-digest: SHA256
+          timestamp-rfc3161: http://timestamp.acs.microsoft.com
+
+      - name: Package (Unix)
+        if: runner.os != 'Windows'
+        run: |
+          cd target/${{ matrix.target }}/release
+          tar czf ../../../4n6mount-${{ steps.version.outputs.version }}-${{ matrix.target }}.tar.gz 4n6mount
+          cd ../../..
+
+      - name: Package (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        # Portable zip of the signed CLI. An MSI/winget path is a documented
+        # follow-up: it needs a Windows-authored, WiX-validated wix/main.wxs and a
+        # note that Windows mounting additionally requires the Dokany runtime.
+        run: |
+          Compress-Archive -Path target/${{ matrix.target }}/release/4n6mount.exe -DestinationPath 4n6mount-${{ steps.version.outputs.version }}-${{ matrix.target }}.zip
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: 4n6mount-${{ steps.version.outputs.version }}-${{ matrix.target }}
+          path: 4n6mount-${{ steps.version.outputs.version }}-${{ matrix.target }}.*
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          path: artifacts
+          pattern: '4n6mount-*-*'
+          merge-multiple: true
+
+      - name: Generate checksums
+        run: |
+          cd artifacts
+          sha256sum * > checksums.txt
+          cat checksums.txt
+
+      - name: Create release
+        uses: softprops/action-gh-release@153bb8e04406b158c6c84fc1615b65b24149a1fe # v2.6.1
+        with:
+          files: |
+            artifacts/4n6mount-*
+            artifacts/checksums.txt
+          generate_release_notes: true
+
+      - name: Dispatch to homebrew tap
+        continue-on-error: true
+        uses: peter-evans/repository-dispatch@ff45666b9427631e3450c54a1bcbee4d9ff4d7c0 # v3.0.0
+        with:
+          token: ${{ secrets.TAP_GITHUB_TOKEN }}
+          repository: SecurityRonin/homebrew-tap
+          event-type: update-4n6mount
+          client-payload: '{"version": "${{ github.ref_name }}"}'
+
+  deb:
+    strategy:
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-gnu
+            os: ubuntu-latest
+            arch: amd64
+          - target: aarch64-unknown-linux-gnu
+            os: ubuntu-24.04-arm
+            arch: arm64
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+      - uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable
+        with:
+          # Must match rust-toolchain.toml's pin (see the build job comment).
+          toolchain: 1.96.0
+          targets: ${{ matrix.target }}
+
+      - name: Install FUSE build deps
+        # Native runners (amd64 + arm64), so each installs its own-arch libfuse3-dev.
+        run: sudo apt-get update && sudo apt-get install -y libfuse3-dev pkg-config
+
+      - name: Install cargo-deb
+        run: cargo install cargo-deb --version 2.11.2 --locked
+
+      - name: Build .deb package
+        run: cargo deb --target ${{ matrix.target }}
+
+      - name: Find .deb file
+        id: find_deb
+        run: |
+          DEB_FILE=$(find target/${{ matrix.target }}/debian -name '*.deb' | head -1)
+          echo "deb_path=$DEB_FILE" >> $GITHUB_OUTPUT
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: forensic-mount-${{ matrix.arch }}.deb
+          path: ${{ steps.find_deb.outputs.deb_path }}
+
+  release-deb:
+    needs: [release, deb]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          pattern: forensic-mount-*.deb
+          path: debs
+          merge-multiple: true
+
+      - name: Upload .deb to release
+        uses: softprops/action-gh-release@153bb8e04406b158c6c84fc1615b65b24149a1fe # v2.6.1
+        with:
+          files: debs/*.deb
+
+  cloudsmith:
+    needs: release-deb
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          pattern: forensic-mount-*.deb
+          path: debs
+          merge-multiple: true
+
+      - name: Install Cloudsmith CLI
+        run: |
+          pip install --user cloudsmith-cli==1.16.0
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+
+      - name: Push amd64 to Cloudsmith
+        env:
+          CLOUDSMITH_API_KEY: ${{ secrets.CLOUDSMITH_API_KEY }}
+        run: cloudsmith push deb securityronin/4n6mount/any-distro/any-version debs/forensic-mount_*_amd64.deb
+
+      - name: Push arm64 to Cloudsmith
+        env:
+          CLOUDSMITH_API_KEY: ${{ secrets.CLOUDSMITH_API_KEY }}
+        run: cloudsmith push deb securityronin/4n6mount/any-distro/any-version debs/forensic-mount_*_arm64.deb
