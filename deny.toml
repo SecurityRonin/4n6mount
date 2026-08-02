@@ -1,19 +1,34 @@
 [advisories]
 version = 2
+
+# `unsound` MUST be set explicitly, or unsoundness advisories are silently
+# dropped — which is why RUSTSEC-2021-0154 sat un-evaluated behind an ignore
+# entry that was doing nothing. cargo-deny 0.19.0 defaults `unsound` to
+# "workspace", but builds the workspace-member set that scope compares against
+# ONLY when the unrelated *unmaintained* scope is "workspace"/"transitive"
+# (src/advisories.rs:77-93). With `unmaintained` at its own "all" default that
+# set is empty, the membership test at line 120 is always false, and every
+# `informational = "unsound"` advisory hits `continue` unreported. "all" takes
+# the unconditional branch (line 111), so it does not depend on that set and
+# stays correct if upstream fixes the gating. Verified against cargo-deny 0.19.0.
+unsound = "all"
+
 ignore = [
-    # fuser 0.15.1: uninitialized-memory unsoundness in libfuse session init.
-    # Patched in fuser >= 0.16.0, but 0.16's build script dropped non-Linux
-    # libfuse support (breaks macOS dev builds) and 0.17 is a breaking
-    # Filesystem-trait rewrite (INodeNo/FileHandle/OpenFlags newtypes, &self
-    # receivers). Tracked for a dedicated fuser-0.17 migration; low risk for a
-    # read-only forensic mount.
-    "RUSTSEC-2021-0154",
-    # Unmaintained-status advisories (informational, not vulnerabilities) on
-    # transitive deps, each with no safe upgrade available:
-    "RUSTSEC-2025-0056", # adler (via blazehash -> flate2/miniz_oxide)
-    "RUSTSEC-2025-0141", # bincode 1.x
-    "RUSTSEC-2025-0057", # fxhash
-    "RUSTSEC-2025-0119", # number_prefix (via indicatif)
+    # RUSTSEC-2026-0002 (lru `IterMut` violates Stacked Borrows, patched in
+    # >= 0.16.3). Surfaced the moment `unsound = "all"` above made the gate
+    # capable of firing. NOT fixable from this repo: the affected lru 0.12.5
+    # arrives transitively as
+    #     lru 0.12.5 <- ewf 0.4.6 <- forensic-vfs-engine 0.1.7 <- forensic-mount
+    # and the published ewf 0.4.6 requires `lru = "0.12"`, a caret no downstream
+    # `cargo update` can cross. (memf-core, the repo's other lru consumer,
+    # already resolves the patched 0.16.4.)
+    #
+    # REMOVAL CONDITION — delete this entry, do not renew it: ewf-forensic's
+    # `fix/lru-unsoundness-rustsec-2026-0002` widens the caret to lru 0.18.1;
+    # once that merges and release-plz publishes ewf >= 0.4.8, run
+    # `cargo update -p ewf` here (forensic-vfs-engine 0.1.7 requires `ewf
+    # "0.4.1"`, so it needs no release of its own) and drop this line.
+    "RUSTSEC-2026-0002",
 ]
 
 [licenses]
