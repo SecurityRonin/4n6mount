@@ -3,6 +3,10 @@
 //!
 //! Usage: `cargo run --features memory --example mkdump -- /tmp/crash.dmp`
 
+// A developer smoke-test helper, not shipped code: a panic on a bad argument is
+// the intended failure mode.
+#![allow(clippy::unwrap_used, clippy::expect_used)]
+
 fn main() {
     let path = std::env::args().nth(1).expect("usage: mkdump <out.dmp>");
     let bytes = memf_format::test_builders::CrashDumpBuilder::new()

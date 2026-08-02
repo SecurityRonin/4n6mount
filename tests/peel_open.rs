@@ -3,6 +3,8 @@
 //! inner image through the engine — yielding the same filesystem as opening the
 //! raw fixture directly.
 
+#![allow(clippy::unwrap_used, clippy::expect_used)]
+
 use std::io::Write;
 use std::path::PathBuf;
 
