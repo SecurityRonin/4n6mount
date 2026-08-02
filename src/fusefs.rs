@@ -906,7 +906,11 @@ impl Filesystem for ForensicFuseFs {
         if parent == FUSE_SESSION_INO {
             if name_bytes == b"status.json" && self.has_session() {
                 let session = self.session.borrow();
-                let s = session.as_ref().unwrap();
+                let Some(s) = session.as_ref() else {
+                    // cov:unreachable: gated by `has_session()` in the condition above.
+                    reply.error(libc::ENOENT);
+                    return;
+                };
                 let status = serde_json::json!({
                     "image_path": s.metadata.image_path,
                     "image_sha256": s.metadata.image_sha256,
@@ -933,7 +937,12 @@ impl Filesystem for ForensicFuseFs {
             // Check overlay created files first.
             if let Some((id, counter, is_dir)) = self.find_created_by_name(fs_parent, name_bytes) {
                 let session = self.session.borrow();
-                let session = session.as_ref().unwrap();
+                let Some(session) = session.as_ref() else {
+                    // cov:unreachable: `find_created_by_name` only matches when
+                    // an overlay — and therefore a session — is present.
+                    reply.error(libc::ENOENT);
+                    return;
+                };
                 let entry = if is_dir {
                     session.overlay.dirs.get(&id)
                 } else {
@@ -1104,7 +1113,11 @@ impl Filesystem for ForensicFuseFs {
                             // session/status.json
                             if self.has_session() {
                                 let session = self.session.borrow();
-                                let s = session.as_ref().unwrap();
+                                let Some(s) = session.as_ref() else {
+                                    // cov:unreachable: gated by `has_session()` above.
+                                    reply.error(libc::ENOENT);
+                                    return;
+                                };
                                 let status = serde_json::json!({
                                     "image_path": s.metadata.image_path,
                                     "image_sha256": s.metadata.image_sha256,
@@ -1846,7 +1859,12 @@ impl Filesystem for ForensicFuseFs {
                     let counter = rw_id - 9_000_000;
                     let created_id = Self::created_overlay_id(counter);
                     let mut session = self.session.borrow_mut();
-                    let s = session.as_mut().unwrap();
+                    let Some(s) = session.as_mut() else {
+                        // cov:unreachable: this operation returns EROFS above
+                        // when `has_session()` is false.
+                        reply.error(libc::EROFS);
+                        return;
+                    };
 
                     let is_known = s.overlay.created.contains_key(&created_id)
                         || s.overlay.dirs.contains_key(&created_id);
@@ -1889,7 +1907,12 @@ impl Filesystem for ForensicFuseFs {
                 let overlay_id = Self::modified_overlay_id(fs_ino);
 
                 let mut session = self.session.borrow_mut();
-                let s = session.as_mut().unwrap();
+                let Some(s) = session.as_mut() else {
+                    // cov:unreachable: this operation returns EROFS above when
+                    // `has_session()` is false.
+                    reply.error(libc::EROFS);
+                    return;
+                };
 
                 if !s.overlay.modified.contains_key(&fs_ino) {
                     let mut fs = self.fs.borrow_mut();
@@ -1931,7 +1954,12 @@ impl Filesystem for ForensicFuseFs {
                 self.ensure_deleted_cache();
                 let overlay_id = Self::modified_overlay_id(fs_ino);
                 let mut session = self.session.borrow_mut();
-                let s = session.as_mut().unwrap();
+                let Some(s) = session.as_mut() else {
+                    // cov:unreachable: this operation returns EROFS above when
+                    // `has_session()` is false.
+                    reply.error(libc::EROFS);
+                    return;
+                };
 
                 if !s.overlay.modified.contains_key(&fs_ino) {
                     let base = {
@@ -2004,7 +2032,12 @@ impl Filesystem for ForensicFuseFs {
         let fuse_ino = rw_ino(counter + 9_000_000);
 
         let mut session = self.session.borrow_mut();
-        let s = session.as_mut().unwrap();
+        let Some(s) = session.as_mut() else {
+            // cov:unreachable: this operation returns EROFS above when
+            // `has_session()` is false.
+            reply.error(libc::EROFS);
+            return;
+        };
 
         if s.write_overlay_file(&created_id, &[]).is_err() {
             reply.error(libc::EIO);
@@ -2059,7 +2092,12 @@ impl Filesystem for ForensicFuseFs {
         let fuse_ino = rw_ino(counter + 9_000_000);
 
         let mut session = self.session.borrow_mut();
-        let s = session.as_mut().unwrap();
+        let Some(s) = session.as_mut() else {
+            // cov:unreachable: this operation returns EROFS above when
+            // `has_session()` is false.
+            reply.error(libc::EROFS);
+            return;
+        };
 
         s.overlay.dirs.insert(
             created_id,
@@ -2095,7 +2133,12 @@ impl Filesystem for ForensicFuseFs {
         // Check if it's a created overlay file first.
         if let Some((id, _counter, _is_dir)) = self.find_created_by_name(fs_parent, name_bytes) {
             let mut session = self.session.borrow_mut();
-            let s = session.as_mut().unwrap();
+            let Some(s) = session.as_mut() else {
+                // cov:unreachable: this operation returns EROFS above when
+                // `has_session()` is false.
+                reply.error(libc::EROFS);
+                return;
+            };
             s.overlay.created.remove(&id);
             s.overlay.dirs.remove(&id);
             let _ = std::fs::remove_file(s.overlay_file_path(&id));
@@ -2112,7 +2155,12 @@ impl Filesystem for ForensicFuseFs {
         match fs.lookup(fs_parent, name_bytes) {
             Ok(Some(child_ino)) => {
                 let mut session = self.session.borrow_mut();
-                let s = session.as_mut().unwrap();
+                let Some(s) = session.as_mut() else {
+                    // cov:unreachable: this operation returns EROFS above when
+                    // `has_session()` is false.
+                    reply.error(libc::EROFS);
+                    return;
+                };
                 if !s.overlay.deleted.contains(&child_ino) {
                     s.overlay.deleted.push(child_ino);
                 }
@@ -2164,7 +2212,12 @@ impl Filesystem for ForensicFuseFs {
                         let counter = rw_id - 9_000_000;
                         let created_id = Self::created_overlay_id(counter);
                         let mut session = self.session.borrow_mut();
-                        let s = session.as_mut().unwrap();
+                        let Some(s) = session.as_mut() else {
+                            // cov:unreachable: this operation returns EROFS
+                            // above when `has_session()` is false.
+                            reply.error(libc::EROFS);
+                            return;
+                        };
 
                         let mut buf = s.read_overlay_file(&created_id).unwrap_or_default();
                         buf.resize(new_size as usize, 0);
@@ -2194,7 +2247,12 @@ impl Filesystem for ForensicFuseFs {
                     let overlay_id = Self::modified_overlay_id(fs_ino);
 
                     let mut session = self.session.borrow_mut();
-                    let s = session.as_mut().unwrap();
+                    let Some(s) = session.as_mut() else {
+                        // cov:unreachable: this operation returns EROFS above
+                        // when `has_session()` is false.
+                        reply.error(libc::EROFS);
+                        return;
+                    };
 
                     if !s.overlay.modified.contains_key(&fs_ino) {
                         let mut fs = self.fs.borrow_mut();

@@ -1,4 +1,8 @@
 #![forbid(unsafe_code)]
+// Tests assert on known-good fixtures, where a panic on an unexpected value is
+// the intended failure mode. Production code stays under the crate's
+// `unwrap_used`/`expect_used` denies.
+#![cfg_attr(test, allow(clippy::unwrap_used, clippy::expect_used))]
 
 pub mod detect;
 pub mod filter;
