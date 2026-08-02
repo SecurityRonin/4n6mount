@@ -428,7 +428,7 @@ version = "2.0.0"
 criteria = "safe-to-deploy"
 
 [[exemptions.fuser]]
-version = "0.15.1"
+version = "0.16.0"
 criteria = "safe-to-deploy"
 
 [[exemptions.futures-core]]
