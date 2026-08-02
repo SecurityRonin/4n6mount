@@ -88,7 +88,18 @@ archive-core = { version = "0.1.0" }
 zip = { version = "2", default-features = false, features = ["deflate"] }
 
 [target.'cfg(unix)'.dependencies]
-fuser = "0.15"
+# 0.16.0 is the RUSTSEC-2021-0154 patched floor: `Session::new` passed a NULL
+# operation list to libfuse's `fuse_session_new`, which expects a real list, so
+# libfuse read uninitialized memory and leaked. 0.17 rewrote the `Filesystem`
+# trait (INodeNo/FileHandle/OpenFlags newtypes, `&self` receivers) and is held
+# for a dedicated migration rather than folded into a security patch.
+#
+# `libfuse` must be named explicitly: 0.16.0 changed `default = ["libfuse"]` to
+# `default = []`, and without it the build script refuses to build on anything
+# but Linux ("Building without libfuse is only supported on Linux"). Requesting
+# it restores exactly the 0.15 feature set on every platform — macFUSE via
+# libfuse2 on macOS, libfuse3 elsewhere.
+fuser = { version = "0.16", features = ["libfuse"] }
 
 [target.'cfg(windows)'.dependencies]
 # Dokan (MIT) Rust bindings for Windows user-mode filesystem mounting. The
