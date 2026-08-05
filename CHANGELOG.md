@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.6.1](https://github.com/SecurityRonin/4n6mount/compare/forensic-mount-v0.6.0...forensic-mount-v0.6.1) - 2026-08-05
+
+### Fixed
+
+- *(security)* bump fuser 0.15 -> 0.16 (RUSTSEC-2021-0154) and unblind the deny gate
+- *(fusefs)* complete the lint set; replace session unwraps with let-else
+- *(supply-chain)* trust our own crates instead of exempting them
+
 ## [0.6.0] - 2026-07-26
 
 ### Changed
