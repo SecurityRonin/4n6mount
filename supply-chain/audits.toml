@@ -223,7 +223,7 @@ end = "2027-08-01"
 criteria = "safe-to-deploy"
 user-id = 347968 # Albert Hui (h4x0r)
 start = "2026-07-15"
-end = "2027-08-01"
+end = "2027-08-06"
 
 [[trusted.shellitem]]
 criteria = "safe-to-deploy"
