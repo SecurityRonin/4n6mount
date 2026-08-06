@@ -1,6 +1,6 @@
 [package]
 name = "forensic-mount"
-version = "0.6.1"
+version = "0.6.2"
 edition = "2021"
 rust-version = "1.93"
 # Required by cargo-deb (it errors without a copyright or authors property).
