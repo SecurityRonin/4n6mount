@@ -1,15 +1,15 @@
 #![forbid(unsafe_code)]
 
 //! The disk-image [`ForensicFs`] backend: an adapter over the `forensic-vfs`
-//! engine's read-only [`FileSystem`] contract.
+//! engine's read-only [`FileSystem`](forensic_vfs::FileSystem) contract.
 //!
 //! The FUSE/Dokan mount layer speaks 4n6mount's own `u64`-inode
-//! [`ForensicFs`](crate::ForensicFs) vocabulary; the engine speaks
+//! [`ForensicFs`] vocabulary; the engine speaks
 //! `forensic_vfs::FileId` (a per-filesystem identity *enum*) and streams owned
 //! iterators. [`EngineFs`] bridges the two: it keeps a bidirectional
 //! `FileId <-> u64` map (a dense allocator, so the huge inode space collapses to
 //! small FUSE inodes) and converts [`FsMeta`](forensic_vfs::FsMeta) into the
-//! mount layer's [`FsMetadata`](crate::FsMetadata).
+//! mount layer's [`FsMetadata`].
 //!
 //! Some forensic surfaces of the old backends have **no** equivalent on the
 //! engine's inode-addressed `FileSystem` trait — deleted-file *recovery*,
@@ -390,7 +390,7 @@ pub fn open_image(path: &Path) -> io::Result<Box<dyn ForensicFs + Send>> {
 /// * A **bare, unpartitioned** filesystem (no volume table) is one volume named
 ///   `root`.
 /// * A **partitioned** disk names each volume by the ADR-0010 precedence
-///   ([`volume_dir_name`]): a wired label (kept verbatim, only unsafe characters
+///   (`volume_dir_name`, private): a wired label (kept verbatim, only unsafe characters
 ///   reversibly percent-encoded), else `_partition<index+1>`.
 ///
 /// The dense per-partition inode multiplexing (see [`MultiPartitionFs`]) keeps
@@ -604,7 +604,7 @@ const MP_ROOT_INO: u64 = 1;
 /// The ADR-0010 volume multiplexer: it surfaces each volume of a disk image as a
 /// `<volume>/` subdirectory under a synthetic root (`_partition<N>`, a wired
 /// label, or `root` for a bare unpartitioned filesystem — see
-/// [`volume_dir_name`]), so an analyst reaches every filesystem (e.g. both the
+/// `volume_dir_name`, private), so an analyst reaches every filesystem (e.g. both the
 /// FAT EFI System Partition *and* the NTFS Windows volume of a GPT disk) rather
 /// than only the first the engine finds, at a constant `<mount>/<volume>/…`
 /// depth even for a single-filesystem image.

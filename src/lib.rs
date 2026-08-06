@@ -286,7 +286,7 @@ pub fn open_memory_provider(
         .map_err(|e| bad(format!("cannot open memory dump {}: {e}", image.display())))
 }
 
-/// Open a memory dump and build a [`MemoryFs`] over it, bootstrapping the
+/// Open a memory dump and build a `MemoryFs` over it, bootstrapping the
 /// analysis context (OS, DTB/CR3, kernel list-heads) via `memf-session`.
 ///
 /// `symbols` is an optional ISF/PDB path. A header-bearing Windows crash dump

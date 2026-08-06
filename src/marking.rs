@@ -9,8 +9,10 @@
 //!   `user.4n6.macb.{modified,accessed,changed,born}` — see
 //!   [`crate::fusefs`]'s `getxattr` / `listxattr`.
 //! - **Windows** (Dokan): NTFS Alternate Data Streams `<name>:4n6.status` and
-//!   `<name>:4n6.macb`, surfaced by `find_streams` — see
-//!   [`crate::fuse_windows`].
+//!   `<name>:4n6.macb`, surfaced by `find_streams` — see the `fuse_windows`
+//!   module. Deliberately not an intra-doc link: that module is
+//!   `#[cfg(windows)]`, so the link is unresolvable in docs built on any other
+//!   host and `-D warnings` rejects it.
 //!
 //! The Unix channel splits the four MACB times across four xattrs; the Windows
 //! channel carries all four in one `:4n6.macb` stream as a JSON object. The

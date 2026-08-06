@@ -10,8 +10,8 @@ cargo-fuzz = true
 [workspace]
 
 [[bin]]
-name = "detect_filesystem"
-path = "fuzz_targets/detect_filesystem.rs"
+name = "detect_memory_dump"
+path = "fuzz_targets/detect_memory_dump.rs"
 test = false
 doc = false
 
