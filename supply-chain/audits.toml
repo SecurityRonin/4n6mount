@@ -73,7 +73,7 @@ end = "2027-08-01"
 criteria = "safe-to-deploy"
 user-id = 347968 # Albert Hui (h4x0r)
 start = "2026-03-05"
-end = "2027-08-01"
+end = "2027-08-06"
 
 [[trusted.ext4fs-core]]
 criteria = "safe-to-deploy"
@@ -97,7 +97,7 @@ end = "2027-08-01"
 criteria = "safe-to-deploy"
 user-id = 347968 # Albert Hui (h4x0r)
 start = "2026-07-07"
-end = "2027-08-01"
+end = "2027-08-06"
 
 [[trusted.forensic-vfs-engine]]
 criteria = "safe-to-deploy"
@@ -115,19 +115,19 @@ end = "2027-08-01"
 criteria = "safe-to-deploy"
 user-id = 347968 # Albert Hui (h4x0r)
 start = "2026-06-05"
-end = "2027-08-01"
+end = "2027-08-06"
 
 [[trusted.forensicnomicon-core]]
 criteria = "safe-to-deploy"
 user-id = 347968 # Albert Hui (h4x0r)
 start = "2026-06-28"
-end = "2027-08-01"
+end = "2027-08-06"
 
 [[trusted.forensicnomicon-data]]
 criteria = "safe-to-deploy"
 user-id = 347968 # Albert Hui (h4x0r)
 start = "2026-06-28"
-end = "2027-08-01"
+end = "2027-08-06"
 
 [[trusted.hfsplus-forensic]]
 criteria = "safe-to-deploy"
@@ -223,7 +223,7 @@ end = "2027-08-01"
 criteria = "safe-to-deploy"
 user-id = 347968 # Albert Hui (h4x0r)
 start = "2026-07-15"
-end = "2027-08-01"
+end = "2027-08-06"
 
 [[trusted.shellitem]]
 criteria = "safe-to-deploy"
@@ -235,7 +235,7 @@ end = "2027-08-01"
 criteria = "safe-to-deploy"
 user-id = 347968 # Albert Hui (h4x0r)
 start = "2026-06-16"
-end = "2027-08-01"
+end = "2027-08-06"
 
 [[trusted.udf-forensic]]
 criteria = "safe-to-deploy"
