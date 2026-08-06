@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.6.2](https://github.com/SecurityRonin/4n6mount/compare/forensic-mount-v0.6.1...forensic-mount-v0.6.2) - 2026-08-06
+
+### Fixed
+
+- repair the dead fuzz target and six broken doc links adoption exposed
+- *(supply-chain)* vet records for the crates the lru fix resolved
+
 ## [0.6.1](https://github.com/SecurityRonin/4n6mount/compare/forensic-mount-v0.6.0...forensic-mount-v0.6.1) - 2026-08-05
 
 ### Fixed
