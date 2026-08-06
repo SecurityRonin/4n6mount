@@ -6,101 +6,50 @@ on:
   pull_request:
     branches: [main]
 
-env:
-  CARGO_TERM_COLOR: always
-  RUSTFLAGS: -Dwarnings
-
-# Every job that resolves dependencies (clippy, test, msrv, deny, geiger) needs
-# this crate's fleet path dependencies. Rather than check each sibling repo out
-# at the matching `../sibling` location -- a list that silently goes stale every
-# time a format is added -- we strip the `path = "..."` keys so Cargo resolves
-# the fleet crates from crates.io (all are published). The committed Cargo.lock
-# is path-based for local dev, so `--locked` is dropped here; CI exercises the
-# published-dependency graph instead.
-# The `fuser` crate links libfuse at build time, so build jobs install
-# libfuse3-dev + pkg-config.
+permissions:
+  contents: read
 
 jobs:
-  fmt:
-    name: Format
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          components: rustfmt
-      - run: cargo fmt --check
+  # fmt · clippy · test · MSRV · cargo-deny · cargo-vet · secret scan ·
+  # fuzz build-check · rustdoc · coverage · path-dep gate.
+  ci:
+    uses: SecurityRonin/fleet-ci/.github/workflows/rust-ci.yml@a62ab10603151071744cec0b4e3638aa6406d4e4
+    with:
+      # `fuser` links libfuse at build time. The workflow this replaces carried
+      # this apt step by hand in four separate jobs; the shared workflow now
+      # takes it as an input so adoption cannot silently drop it. A native
+      # dependency fails in the LINKER rather than in cargo, so losing it shows
+      # up as "failed to run custom build command for fuser" — which is exactly
+      # how forensic-mount 0.6.1 failed to publish.
+      system-packages: libfuse3-dev pkg-config
 
-  clippy:
-    name: Clippy
-    runs-on: ubuntu-latest
-    steps:
-      - run: sudo apt-get update && sudo apt-get install -y libfuse3-dev pkg-config
-      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
-      - name: Use crates.io for fleet deps (drop local path deps)
-        run: sed -i -E 's/, path = "[^"]*"//' Cargo.toml
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          components: clippy
-      - uses: Swatinem/rust-cache@9d47c6ad4b02e050fd481d890b2ea34778fd09d6 # v2.7.8
-      - run: cargo clippy --all-targets -- -D warnings
+      # libfuse3-dev is Linux-only and `system-packages` is deliberately gated to
+      # Linux, so the macOS and Windows legs could not build fuser. This is NOT a
+      # narrowing: the workflow being replaced ran its test job on ubuntu-latest
+      # only, so the platform set is unchanged.
+      os-matrix: false
 
-  test:
-    name: Test
-    runs-on: ubuntu-latest
-    steps:
-      - run: sudo apt-get update && sudo apt-get install -y libfuse3-dev pkg-config
-      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
-      - name: Use crates.io for fleet deps (drop local path deps)
-        run: sed -i -E 's/, path = "[^"]*"//' Cargo.toml
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@9d47c6ad4b02e050fd481d890b2ea34778fd09d6 # v2.7.8
-      - run: cargo test
+      # MIGRATION DEBT — and the first time this repo has measured coverage at
+      # all. The workflow being replaced had no coverage job, so there is no
+      # earlier number to regress from. Measured at the fleet scope
+      # (--workspace --all-features): 60.54% of lines.
+      #
+      # The floor is 60, just under the measured value, so it holds the line
+      # rather than granting slack — a real drop still fails. It is not the
+      # fleet's per-line gate: a floor cannot honour a `// cov:unreachable`
+      # exemption and never names which lines are uncovered, so the shared
+      # workflow renders it in the checks UI as debt and warns on every run.
+      #
+      # REMOVE WHEN: the uncovered surface is tested and this repo can inherit
+      # `coverage-gate: strict`. types.rs at 24% of lines is the largest gap.
+      coverage-gate: floor
+      coverage-floor: 60
 
-  msrv:
-    name: MSRV (1.93)
-    runs-on: ubuntu-latest
-    steps:
-      - run: sudo apt-get update && sudo apt-get install -y libfuse3-dev pkg-config
-      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
-      - name: Use crates.io for fleet deps (drop local path deps)
-        run: sed -i -E 's/, path = "[^"]*"//' Cargo.toml
-      - uses: dtolnay/rust-toolchain@1.93
-      - uses: Swatinem/rust-cache@9d47c6ad4b02e050fd481d890b2ea34778fd09d6 # v2.7.8
-      - run: cargo test
-
-  deny:
-    name: Cargo Deny
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
-      - name: Use crates.io for fleet deps (drop local path deps)
-        run: sed -i -E 's/, path = "[^"]*"//' Cargo.toml
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: taiki-e/install-action@15449e3094499af05d8d964a1c884208e4b8b595 # v2.81.11
-        with:
-          tool: cargo-deny
-      - run: cargo deny check
-
-  secrets:
-    name: Secret Scan (gitleaks)
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
-        with:
-          fetch-depth: 0
-      # gitleaks-action v2+ demands a paid GITLEAKS_LICENSE for organization
-      # repos; the upstream binary itself is unrestricted, so we download and
-      # run it directly to keep the secret scan free and license-free.
-      - name: Install gitleaks
-        run: |
-          set -euo pipefail
-          VERSION=8.30.1
-          curl -sSL "https://github.com/gitleaks/gitleaks/releases/download/v${VERSION}/gitleaks_${VERSION}_linux_x64.tar.gz" \
-            | tar -xz -C /usr/local/bin gitleaks
-          gitleaks version
-      - run: gitleaks detect --source . --redact --no-banner -v
-
+  # Reporting only — fuser and the FFI surface use unsafe by necessity. Review
+  # the output; a spike vs baseline warrants investigation. Repo-specific, so it
+  # stays here rather than moving into the shared workflow. Carried over
+  # verbatim, including the path-dep rewrite it needs to resolve fleet deps from
+  # crates.io.
   geiger:
     name: Unsafe Audit (cargo-geiger)
     runs-on: ubuntu-latest
@@ -114,20 +63,3 @@ jobs:
       - uses: Swatinem/rust-cache@9d47c6ad4b02e050fd481d890b2ea34778fd09d6 # v2.7.8
       - run: cargo install cargo-geiger --locked
       - run: cargo geiger 2>&1 || true
-
-  vet:
-    name: Cargo Vet (supply-chain)
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
-      - name: Use crates.io for fleet deps (drop local path deps)
-        run: sed -i -E 's/, path = "[^"]*"//' Cargo.toml
-      - uses: dtolnay/rust-toolchain@stable
-      - name: Install cargo-vet
-        uses: taiki-e/install-action@59012be0884e296ca2da49b530610e72c49039ad # v2.81.6
-        with:
-          tool: cargo-vet
-      - name: Fetch dependencies
-        run: cargo fetch
-      - name: Check supply chain
-        run: cargo vet
