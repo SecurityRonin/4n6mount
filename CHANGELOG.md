@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.6.3](https://github.com/SecurityRonin/4n6mount/compare/forensic-mount-v0.6.2...forensic-mount-v0.6.3) - 2026-08-09
+
+### Fixed
+
+- *(gitignore)* unanchor the target rule so nested cargo projects are ignored
+
 ## [0.6.2](https://github.com/SecurityRonin/4n6mount/compare/forensic-mount-v0.6.1...forensic-mount-v0.6.2) - 2026-08-06
 
 ### Fixed
