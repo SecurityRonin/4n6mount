@@ -66,7 +66,7 @@ memf-format = { version = "0.3", optional = true }
 memf-core = { version = "0.2", optional = true }
 memf-session = { version = "0.3", optional = true }
 memf-symbols = { version = "0.2", optional = true }
-memf-windows = { version = "0.3", optional = true }
+memf-windows = { version = "0.5", optional = true }
 memf-linux = { version = "0.3", optional = true }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
