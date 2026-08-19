@@ -44,24 +44,3 @@ jobs:
       # `coverage-gate: strict`. types.rs at 24% of lines is the largest gap.
       coverage-gate: floor
       coverage-floor: 60
-
-  # Reporting only — fuser and the FFI surface use unsafe by necessity. Review
-  # the output; a spike vs baseline warrants investigation. Repo-specific, so it
-  # stays here rather than moving into the shared workflow. Carried over
-  # verbatim, including the path-dep rewrite it needs to resolve fleet deps from
-  # crates.io.
-  geiger:
-    name: Unsafe Audit (cargo-geiger)
-    runs-on: ubuntu-latest
-    continue-on-error: true
-    steps:
-      - run: sudo apt-get update && sudo apt-get install -y libfuse3-dev pkg-config
-      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
-      - name: Use crates.io for fleet deps (drop local path deps)
-        run: sed -i -E 's/, path = "[^"]*"//' Cargo.toml
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@9d47c6ad4b02e050fd481d890b2ea34778fd09d6 # v2.7.8
-        with:
-          cache-on-failure: true
-      - run: cargo install cargo-geiger --locked
-      - run: cargo geiger 2>&1 || true
