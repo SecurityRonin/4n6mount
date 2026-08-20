@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.6.3](https://github.com/SecurityRonin/4n6mount/compare/forensic-mount-v0.6.2...forensic-mount-v0.6.3) - 2026-08-20
+
+### Fixed
+
+- *(security)* take memf-windows 0.5 to reach the patched yara-x and wasmtime ([#23](https://github.com/SecurityRonin/4n6mount/pull/23))
+- *(gitignore)* unanchor the target rule so nested cargo projects are ignored
+
 ## [0.6.2](https://github.com/SecurityRonin/4n6mount/compare/forensic-mount-v0.6.1...forensic-mount-v0.6.2) - 2026-08-06
 
 ### Fixed
