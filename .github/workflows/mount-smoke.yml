@@ -79,9 +79,33 @@ jobs:
           $PSNativeCommandUseErrorActionPreference = $false
           # Dokany (LGPL/MIT) runtime: kernel driver + System32 dokan2.dll.
           $msi = "$PWD\Dokan_x64.msi"
-          Write-Host "Downloading Dokany MSI..."
-          Invoke-WebRequest https://github.com/dokan-dev/dokany/releases/download/v2.3.0.1000/Dokan_x64.msi -OutFile $msi
-          Write-Host "Downloaded $((Get-Item $msi).Length) bytes; running msiexec /quiet..."
+          $url = 'https://github.com/dokan-dev/dokany/releases/download/v2.3.0.1000/Dokan_x64.msi'
+          # Retried, because this failed the job once on a transient fetch: the
+          # request died in ~21s and the whole smoke run went red over a network
+          # blip rather than anything about the code. `-MaximumRetryCount` alone
+          # would not have helped -- it retries HTTP 429/5xx, not a dropped
+          # connection -- so the loop catches any terminating error.
+          $downloaded = $false
+          foreach ($attempt in 1..3) {
+            try {
+              Write-Host "Downloading Dokany MSI (attempt $attempt/3)..."
+              Invoke-WebRequest $url -OutFile $msi -TimeoutSec 120
+              $downloaded = $true
+              break
+            } catch {
+              Write-Host "::warning::Dokany MSI download failed (attempt $attempt/3): $($_.Exception.Message)"
+              if (Test-Path $msi) { Remove-Item $msi -Force }
+              if ($attempt -lt 3) { Start-Sleep -Seconds (15 * $attempt) }
+            }
+          }
+          if (-not $downloaded) {
+            throw "Dokany MSI download failed on all 3 attempts. This is the GitHub releases endpoint being unreachable, not a code failure."
+          }
+          # A truncated download installs as a corrupt MSI and fails later with a
+          # msiexec code that says nothing about the cause, so check it here.
+          $size = (Get-Item $msi).Length
+          if ($size -lt 1MB) { throw "Dokany MSI is only $size bytes; the download was truncated." }
+          Write-Host "Downloaded $size bytes; running msiexec /quiet..."
           $proc = Start-Process msiexec.exe -ArgumentList '/i',"`"$msi`"",'/quiet','/norestart','/l*v','dokan-install.log' -Wait -PassThru
           $code = if ($null -ne $proc.ExitCode) { $proc.ExitCode } else { 0 }
           Write-Host "msiexec exit code: $code"
