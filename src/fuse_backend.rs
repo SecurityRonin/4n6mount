@@ -44,7 +44,19 @@ impl FuseBackend {
     /// Returns the offending value when it is not a known backend, so the
     /// caller can show it rather than saying only "invalid".
     pub fn parse(s: &str) -> Result<Self, String> {
-        Err(format!("unimplemented: {s}"))
+        match s.trim().to_ascii_lowercase().as_str() {
+            "auto" => Ok(Self::Auto),
+            // "kext" is what the documentation and the community call it; both
+            // names reach the same mechanism so neither is a wrong guess.
+            "kernel" | "kext" => Ok(Self::Kernel),
+            "fskit" => Ok(Self::FsKit),
+            "fskit-local" | "fskit_local" => Ok(Self::FsKitLocal),
+            "fuse-t" | "fuset" => Ok(Self::FuseT),
+            other => Err(format!(
+                "unknown FUSE backend {other:?}; expected one of: \
+                 auto, kernel (kext), fskit, fskit-local, fuse-t"
+            )),
+        }
     }
 
     /// The `backend=` mount option this maps to, if any.
@@ -53,7 +65,15 @@ impl FuseBackend {
     /// chosen by which library the binary links.
     #[must_use]
     pub fn mount_option(self) -> Option<&'static str> {
-        None
+        match self {
+            Self::Auto => Some("backend=auto"),
+            Self::Kernel => Some("backend=kernel"),
+            Self::FsKit => Some("backend=fskit"),
+            Self::FsKitLocal => Some("backend=fskit-local"),
+            // FUSE-T is a different library implementing the same API. No
+            // mount option reaches it; the binary either links it or does not.
+            Self::FuseT => None,
+        }
     }
 }
 
@@ -75,13 +95,91 @@ pub struct BackendStatus {
 /// is testable without installing anything. Real callers pass the live paths.
 #[must_use]
 pub fn probe(
-    _dev_macfuse_present: bool,
-    _staged_kext: Option<&str>,
-    _installed_kext: Option<&str>,
-    _fskit_modules: &[&str],
-    _fuse_t_lib: Option<&Path>,
+    dev_macfuse_present: bool,
+    staged_kext: Option<&str>,
+    installed_kext: Option<&str>,
+    fskit_modules: &[&str],
+    fuse_t_lib: Option<&Path>,
 ) -> Vec<BackendStatus> {
-    Vec::new()
+    let kernel_detail = if dev_macfuse_present {
+        "/dev/macfuse is present; the kernel extension is loaded".to_string()
+    } else {
+        match (staged_kext, installed_kext) {
+            // The mismatch IS the diagnosis: a newly installed kext only loads
+            // after it is approved and the machine reboots, which is what
+            // stages it. Approving the OLD version changes nothing, so both
+            // numbers have to be visible or the state looks like a bare
+            // permission failure.
+            (Some(st), Some(ins)) if st != ins => format!(
+                "kext {ins} is installed but {st} is staged: approve macFUSE in \
+                 Privacy & Security, then reboot to stage {ins}"
+            ),
+            (Some(st), Some(_)) => format!(
+                "kext {st} is staged but not loaded; a reboot, or Reduced Security \
+                 on Apple silicon, may be required"
+            ),
+            (None, Some(ins)) => format!(
+                "kext {ins} is installed but never approved: approve it in \
+                 Privacy & Security, then reboot"
+            ),
+            _ => "no macFUSE kernel extension is installed".to_string(),
+        }
+    };
+
+    let has = |needle: &str| fskit_modules.iter().any(|m| m.contains(needle));
+    // The two personalities register as separate modules, so one can be
+    // enabled and the other not. Reporting them together would claim a
+    // capability the machine may not have.
+    let scheme = has("fsmodule.macfuse") && !has_only_local(fskit_modules);
+    let local = has("fsmodule.macfuse-local");
+
+    vec![
+        BackendStatus {
+            backend: FuseBackend::Kernel,
+            available: dev_macfuse_present,
+            detail: kernel_detail,
+        },
+        BackendStatus {
+            backend: FuseBackend::FsKit,
+            available: scheme,
+            detail: if scheme {
+                "FSKit module registered (scheme-based)".to_string()
+            } else {
+                "FSKit module not registered: launch macfuse.app, then enable it \
+                 in System Settings > General > Login Items & Extensions"
+                    .to_string()
+            },
+        },
+        BackendStatus {
+            backend: FuseBackend::FsKitLocal,
+            available: local,
+            detail: if local {
+                "FSKit module registered (block resources)".to_string()
+            } else {
+                "FSKit local module not registered".to_string()
+            },
+        },
+        BackendStatus {
+            backend: FuseBackend::FuseT,
+            available: fuse_t_lib.is_some(),
+            detail: match fuse_t_lib {
+                Some(p) => format!("FUSE-T library at {}", p.display()),
+                None => "FUSE-T is not installed (brew install --cask fuse-t)".to_string(),
+            },
+        },
+    ]
+}
+
+/// Whether the only macFUSE module present is the `-local` personality.
+///
+/// `"...fsmodule.macfuse-local"` contains `"fsmodule.macfuse"` as a substring,
+/// so a naive check reports the scheme module as present when only the local
+/// one is registered.
+fn has_only_local(modules: &[&str]) -> bool {
+    modules.iter().any(|m| m.contains("fsmodule.macfuse-local"))
+        && !modules
+            .iter()
+            .any(|m| m.trim_end().ends_with("fsmodule.macfuse"))
 }
 
 #[cfg(test)]
@@ -110,7 +208,10 @@ mod tests {
     #[test]
     fn an_unknown_backend_name_is_refused_showing_the_value() {
         let e = FuseBackend::parse("macfuse2").expect_err("unknown names are refused");
-        assert!(e.contains("macfuse2"), "the error must show the value, got {e:?}");
+        assert!(
+            e.contains("macfuse2"),
+            "the error must show the value, got {e:?}"
+        );
     }
 
     /// RED: the three macFUSE mechanisms map to `backend=` options; FUSE-T does
@@ -153,10 +254,9 @@ mod tests {
     #[test]
     fn a_present_device_node_means_the_kernel_backend_works() {
         let s = probe(true, Some("5.4.0"), Some("5.4.0"), &[], None);
-        assert!(
-            s.iter()
-                .any(|b| b.backend == FuseBackend::Kernel && b.available)
-        );
+        assert!(s
+            .iter()
+            .any(|b| b.backend == FuseBackend::Kernel && b.available));
     }
 
     /// RED: an FSKit module that is registered is reported per personality.
@@ -181,7 +281,13 @@ mod tests {
     /// RED: FUSE-T counts as available only when its library is actually there.
     #[test]
     fn fuse_t_is_available_only_when_its_library_exists() {
-        let with = probe(false, None, None, &[], Some(Path::new("/usr/local/lib/libfuse-t.dylib")));
+        let with = probe(
+            false,
+            None,
+            None,
+            &[],
+            Some(Path::new("/usr/local/lib/libfuse-t.dylib")),
+        );
         assert!(with
             .iter()
             .any(|b| b.backend == FuseBackend::FuseT && b.available));
