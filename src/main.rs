@@ -247,6 +247,84 @@ fn route_memory_mount(_image: &str, _mountpoint: &str, _symbols: Option<&str>, _
     std::process::exit(1);
 }
 
+/// clap adaptor for [`forensic_mount::fuse_backend::FuseBackend`].
+fn parse_fuse_backend(s: &str) -> Result<forensic_mount::fuse_backend::FuseBackend, String> {
+    forensic_mount::fuse_backend::FuseBackend::parse(s)
+}
+
+/// Probe the live machine and report every FUSE mechanism.
+///
+/// Reads the real paths here and hands them to the pure prober, so the decision
+/// logic stays testable without installing anything (Humble Object).
+fn report_fuse_backends() {
+    use forensic_mount::fuse_backend::probe;
+
+    let dev_present = std::fs::read_dir("/dev").is_ok_and(|d| {
+        d.flatten()
+            .any(|e| e.file_name().to_string_lossy().starts_with("macfuse"))
+    });
+
+    let ver = |p: &str| -> Option<String> {
+        let out = std::process::Command::new("/usr/bin/defaults")
+            .args(["read", p, "CFBundleVersion"])
+            .output()
+            .ok()?;
+        let v = String::from_utf8_lossy(&out.stdout).trim().to_string();
+        (!v.is_empty()).then_some(v)
+    };
+    let installed = ver(
+        "/Library/Filesystems/macfuse.fs/Contents/Extensions/26/macfuse.kext/Contents/Info.plist",
+    );
+    let staged = ver(
+        "/Library/StagedExtensions/Library/Filesystems/macfuse.fs/Contents/Extensions/26/macfuse.kext/Contents/Info.plist",
+    );
+
+    let plug = std::process::Command::new("/usr/bin/pluginkit")
+        .args(["-mAv", "-p", "com.apple.fskit.fsmodule"])
+        .output()
+        .map(|o| String::from_utf8_lossy(&o.stdout).into_owned())
+        .unwrap_or_default();
+    let modules: Vec<&str> = plug
+        .lines()
+        .filter(|l| l.contains("macfuse"))
+        .map(str::trim)
+        .collect();
+
+    let fuse_t = [
+        "/usr/local/lib/libfuse-t.dylib",
+        "/usr/local/lib/libfuse-t-1.2.7.dylib",
+    ]
+    .iter()
+    .map(std::path::Path::new)
+    .find(|p| p.exists());
+
+    // What this BINARY was built against — the only thing that makes FUSE-T
+    // reachable. A copy installed on disk cannot be reached by a binary linking
+    // macFUSE's libfuse, so presence and capability are reported separately.
+    let linked_fuse_t = cfg!(feature = "fuse-t");
+
+    println!("FUSE mechanisms on this machine:\n");
+    for b in probe(
+        dev_present,
+        staged.as_deref(),
+        installed.as_deref(),
+        &modules,
+        fuse_t,
+        linked_fuse_t,
+    ) {
+        println!(
+            "  {:<12} {:<11} {}",
+            format!("{:?}", b.backend),
+            if b.available {
+                "available"
+            } else {
+                "unavailable"
+            },
+            b.detail
+        );
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -388,79 +466,5 @@ mod tests {
         assert!(cli.resume);
         assert!(cli.daemon);
         assert_eq!(cli.filter_dbs.len(), 1);
-    }
-}
-
-/// clap adaptor for [`forensic_mount::fuse_backend::FuseBackend`].
-fn parse_fuse_backend(s: &str) -> Result<forensic_mount::fuse_backend::FuseBackend, String> {
-    forensic_mount::fuse_backend::FuseBackend::parse(s)
-}
-
-/// Probe the live machine and report every FUSE mechanism.
-///
-/// Reads the real paths here and hands them to the pure prober, so the decision
-/// logic stays testable without installing anything (Humble Object).
-fn report_fuse_backends() {
-    use forensic_mount::fuse_backend::probe;
-
-    let dev_present = std::fs::read_dir("/dev")
-        .map(|d| {
-            d.flatten()
-                .any(|e| e.file_name().to_string_lossy().starts_with("macfuse"))
-        })
-        .unwrap_or(false);
-
-    let ver = |p: &str| -> Option<String> {
-        let out = std::process::Command::new("/usr/bin/defaults")
-            .args(["read", p, "CFBundleVersion"])
-            .output()
-            .ok()?;
-        let v = String::from_utf8_lossy(&out.stdout).trim().to_string();
-        (!v.is_empty()).then_some(v)
-    };
-    let installed = ver(
-        "/Library/Filesystems/macfuse.fs/Contents/Extensions/26/macfuse.kext/Contents/Info.plist",
-    );
-    let staged = ver(
-        "/Library/StagedExtensions/Library/Filesystems/macfuse.fs/Contents/Extensions/26/macfuse.kext/Contents/Info.plist",
-    );
-
-    let plug = std::process::Command::new("/usr/bin/pluginkit")
-        .args(["-mAv", "-p", "com.apple.fskit.fsmodule"])
-        .output()
-        .map(|o| String::from_utf8_lossy(&o.stdout).into_owned())
-        .unwrap_or_default();
-    let modules: Vec<&str> = plug
-        .lines()
-        .filter(|l| l.contains("macfuse"))
-        .map(str::trim)
-        .collect();
-
-    let fuse_t = [
-        "/usr/local/lib/libfuse-t.dylib",
-        "/usr/local/lib/libfuse-t-1.2.7.dylib",
-    ]
-    .iter()
-    .map(std::path::Path::new)
-    .find(|p| p.exists());
-
-    println!("FUSE mechanisms on this machine:\n");
-    for b in probe(
-        dev_present,
-        staged.as_deref(),
-        installed.as_deref(),
-        &modules,
-        fuse_t,
-    ) {
-        println!(
-            "  {:<12} {:<11} {}",
-            format!("{:?}", b.backend),
-            if b.available {
-                "available"
-            } else {
-                "unavailable"
-            },
-            b.detail
-        );
     }
 }

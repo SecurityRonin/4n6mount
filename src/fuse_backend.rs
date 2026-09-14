@@ -29,9 +29,9 @@ pub enum FuseBackend {
     Auto,
     /// macFUSE kernel extension.
     Kernel,
-    /// macFUSE FSKit module, scheme-based.
+    /// `macFUSE` `FSKit` module, scheme-based.
     FsKit,
-    /// macFUSE FSKit module, block-resource personality.
+    /// `macFUSE` `FSKit` module, block-resource personality.
     FsKitLocal,
     /// FUSE-T, over loopback NFS.
     FuseT,
@@ -91,8 +91,20 @@ pub struct BackendStatus {
 
 /// Probe the machine for usable FUSE mechanisms.
 ///
-/// Pure with respect to the filesystem paths handed in, so the decision logic
-/// is testable without installing anything. Real callers pass the live paths.
+/// `available` means **this binary can mount with it right now** — not that the
+/// pieces are installed somewhere. The distinction is the whole point: a
+/// registered `FSKit` module says nothing about whether the linked `libfuse` will
+/// route a mount to it, and FUSE-T's library sitting on disk says nothing about
+/// a binary that links macFUSE's `libfuse` instead. Reporting inventory as
+/// capability produced three false "available" claims and a mount that failed
+/// three times with macFUSE's own error — including for FUSE-T, which proves it
+/// was never reached.
+///
+/// `linked_fuse_t` is what the binary was BUILT against; `fuse_t_lib` only says
+/// something is installed, which is reported as context and never as capability.
+///
+/// Pure with respect to its inputs, so the decision logic is testable without
+/// installing anything.
 #[must_use]
 pub fn probe(
     dev_macfuse_present: bool,
@@ -100,6 +112,7 @@ pub fn probe(
     installed_kext: Option<&str>,
     fskit_modules: &[&str],
     fuse_t_lib: Option<&Path>,
+    linked_fuse_t: bool,
 ) -> Vec<BackendStatus> {
     let kernel_detail = if dev_macfuse_present {
         "/dev/macfuse is present; the kernel extension is loaded".to_string()
@@ -133,12 +146,8 @@ pub fn probe(
     // "fsmodule.macfuse-local", and a real pluginkit line carries a version
     // suffix and tab-separated columns after the identifier.
     let ids: Vec<&str> = fskit_modules.iter().map(|m| bundle_id(m)).collect();
-    let scheme = ids
-        .iter()
-        .any(|id| *id == "io.macfuse.app.fsmodule.macfuse");
-    let local = ids
-        .iter()
-        .any(|id| *id == "io.macfuse.app.fsmodule.macfuse-local");
+    let scheme = ids.contains(&"io.macfuse.app.fsmodule.macfuse");
+    let local = ids.contains(&"io.macfuse.app.fsmodule.macfuse-local");
 
     vec![
         BackendStatus {
@@ -147,10 +156,15 @@ pub fn probe(
             detail: kernel_detail,
         },
         BackendStatus {
+            // Registered is not routable. Until a mount through the linked
+            // libfuse is demonstrated, this is reported as present-not-usable.
             backend: FuseBackend::FsKit,
-            available: scheme,
+            available: false,
             detail: if scheme {
-                "FSKit module registered (scheme-based)".to_string()
+                "FSKit module registered (scheme-based), but this build's libfuse \
+                 is not known to route mounts to FSKit — try --fuse-backend fskit \
+                 and report the result"
+                    .to_string()
             } else {
                 "FSKit module not registered: launch macfuse.app, then enable it \
                  in System Settings > General > Login Items & Extensions"
@@ -159,19 +173,30 @@ pub fn probe(
         },
         BackendStatus {
             backend: FuseBackend::FsKitLocal,
-            available: local,
+            available: false,
             detail: if local {
-                "FSKit module registered (block resources)".to_string()
+                "FSKit module registered (block resources), but not known to be \
+                 routable from this build"
+                    .to_string()
             } else {
                 "FSKit local module not registered".to_string()
             },
         },
         BackendStatus {
+            // FUSE-T is a different library implementing the same API, so it is
+            // reachable only if this binary was LINKED against it. Its presence
+            // on disk is context, never capability.
             backend: FuseBackend::FuseT,
-            available: fuse_t_lib.is_some(),
-            detail: match fuse_t_lib {
-                Some(p) => format!("FUSE-T library at {}", p.display()),
-                None => "FUSE-T is not installed (brew install --cask fuse-t)".to_string(),
+            available: linked_fuse_t,
+            detail: match (linked_fuse_t, fuse_t_lib) {
+                (true, Some(p)) => format!("linked against FUSE-T at {}", p.display()),
+                (true, None) => "built against FUSE-T".to_string(),
+                (false, Some(p)) => format!(
+                    "FUSE-T is installed at {} but this binary links macFUSE's \
+                     libfuse; rebuild against FUSE-T to use it",
+                    p.display()
+                ),
+                (false, None) => "FUSE-T is not installed (brew install --cask fuse-t)".to_string(),
             },
         },
     ]
@@ -189,7 +214,7 @@ pub fn probe(
 /// suffix removed. Accepting a bare identifier too keeps callers that already
 /// have one from having to fake a line.
 fn bundle_id(line: &str) -> &str {
-    let first = line.trim().split_whitespace().next().unwrap_or("");
+    let first = line.split_whitespace().next().unwrap_or("");
     match first.find('(') {
         Some(i) => &first[..i],
         None => first,
@@ -251,7 +276,7 @@ mod tests {
     /// permission error that no amount of approving the OLD version fixes.
     #[test]
     fn a_stale_staged_kext_is_reported_as_the_reason() {
-        let s = probe(false, Some("5.3.3"), Some("5.4.0"), &[], None);
+        let s = probe(false, Some("5.3.3"), Some("5.4.0"), &[], None, false);
         let kernel = s
             .iter()
             .find(|b| b.backend == FuseBackend::Kernel)
@@ -267,56 +292,91 @@ mod tests {
     /// RED: with the device node present the kernel backend is usable.
     #[test]
     fn a_present_device_node_means_the_kernel_backend_works() {
-        let s = probe(true, Some("5.4.0"), Some("5.4.0"), &[], None);
+        let s = probe(true, Some("5.4.0"), Some("5.4.0"), &[], None, false);
         assert!(s
             .iter()
             .any(|b| b.backend == FuseBackend::Kernel && b.available));
     }
 
-    /// RED: an FSKit module that is registered is reported per personality.
+    /// RED: registration is DETECTED per personality, and reported as presence
+    /// rather than as capability.
+    ///
+    /// `available` means "this binary can mount with it now". A registered
+    /// module says nothing about whether the linked `libfuse` routes to `FSKit`, so
+    /// detection must show up in the DETAIL while `available` stays false until
+    /// a mount is demonstrated. Equating the two produced a probe that claimed
+    /// three usable backends and could mount with none of them.
     #[test]
-    fn registered_fskit_modules_are_reported_individually() {
+    fn registered_fskit_modules_are_detected_individually() {
         let s = probe(
             false,
             None,
             None,
             &["io.macfuse.app.fsmodule.macfuse"],
             None,
+            false,
         );
-        let scheme = s.iter().find(|b| b.backend == FuseBackend::FsKit);
-        let local = s.iter().find(|b| b.backend == FuseBackend::FsKitLocal);
-        assert!(scheme.is_some_and(|b| b.available), "scheme module present");
+        let scheme = s
+            .iter()
+            .find(|b| b.backend == FuseBackend::FsKit)
+            .expect("reported");
+        let local = s
+            .iter()
+            .find(|b| b.backend == FuseBackend::FsKitLocal)
+            .expect("reported");
         assert!(
-            local.is_some_and(|b| !b.available),
-            "the local personality was NOT registered and must not be claimed"
+            scheme.detail.contains("registered"),
+            "the scheme module IS registered here and the detail must say so: {:?}",
+            scheme.detail
+        );
+        assert!(
+            local.detail.contains("not registered"),
+            "the local personality is absent and must be reported so: {:?}",
+            local.detail
+        );
+        assert!(
+            !scheme.available,
+            "registration is not capability; available must stay false"
         );
     }
 
-    /// RED: FUSE-T counts as available only when its library is actually there.
+    /// RED: FUSE-T is available only when this binary was LINKED against it.
+    ///
+    /// Its library existing on disk proves nothing: FUSE-T is a different
+    /// library implementing the same API, so a binary linking macFUSE's libfuse
+    /// cannot reach it however many copies are installed. The earlier version of
+    /// this probe reported "available" from the file's presence, and the mount
+    /// then failed with macFUSE's own error — proof it never reached FUSE-T.
     #[test]
-    fn fuse_t_is_available_only_when_its_library_exists() {
-        let with = probe(
-            false,
-            None,
-            None,
-            &[],
-            Some(Path::new("/usr/local/lib/libfuse-t.dylib")),
-        );
-        assert!(with
-            .iter()
-            .any(|b| b.backend == FuseBackend::FuseT && b.available));
+    fn fuse_t_is_available_only_when_linked_not_merely_installed() {
+        let installed = Some(Path::new("/usr/local/lib/libfuse-t.dylib"));
 
-        let without = probe(false, None, None, &[], None);
-        assert!(without
+        let linked = probe(false, None, None, &[], installed, true);
+        assert!(
+            linked
+                .iter()
+                .any(|b| b.backend == FuseBackend::FuseT && b.available),
+            "linked against FUSE-T means usable"
+        );
+
+        let merely_installed = probe(false, None, None, &[], installed, false);
+        let s = merely_installed
             .iter()
-            .any(|b| b.backend == FuseBackend::FuseT && !b.available));
+            .find(|b| b.backend == FuseBackend::FuseT)
+            .expect("reported");
+        assert!(!s.available, "installed but not linked is NOT available");
+        assert!(
+            s.detail.contains("rebuild"),
+            "and the detail must say what would fix it: {:?}",
+            s.detail
+        );
     }
 
     /// RED: every mechanism is reported, present or not. A probe that omits the
     /// unavailable ones cannot explain why a mount failed.
     #[test]
     fn the_probe_reports_every_mechanism() {
-        let s = probe(false, None, None, &[], None);
+        let s = probe(false, None, None, &[], None, false);
         for b in [
             FuseBackend::Kernel,
             FuseBackend::FsKit,
@@ -349,16 +409,24 @@ mod tests {
             "   io.macfuse.app.fsmodule.macfuse(2.0)\t63CF120B-A09D-464B-81AC-9FD974C5F66E\t2026-09-14 09:00:33 +0000\t/Library/Filesystems/macfuse.fs/Contents/Resources/macfuse.app/Contents/Extensions/io.macfuse.app.fsmodule.macfuse.appex",
             "   io.macfuse.app.fsmodule.macfuse-local(2.0)\tD20E163C-267A-4712-9619-974739FEAA51\t2026-09-14 09:00:33 +0000\t/Library/Filesystems/macfuse.fs/Contents/Resources/macfuse.app/Contents/Extensions/io.macfuse.app.fsmodule.macfuse-local.appex",
         ];
-        let s = probe(false, None, None, &lines, None);
+        let s = probe(false, None, None, &lines, None, false);
+        let scheme = s
+            .iter()
+            .find(|b| b.backend == FuseBackend::FsKit)
+            .expect("reported");
+        let local = s
+            .iter()
+            .find(|b| b.backend == FuseBackend::FsKitLocal)
+            .expect("reported");
         assert!(
-            s.iter()
-                .any(|b| b.backend == FuseBackend::FsKit && b.available),
-            "the scheme module IS registered in this output and must be reported"
+            scheme.detail.contains("registered") && !scheme.detail.contains("not registered"),
+            "the scheme module IS registered in this output: {:?}",
+            scheme.detail
         );
         assert!(
-            s.iter()
-                .any(|b| b.backend == FuseBackend::FsKitLocal && b.available),
-            "and so is the local personality"
+            local.detail.contains("registered") && !local.detail.contains("not registered"),
+            "and so is the local personality: {:?}",
+            local.detail
         );
     }
 
@@ -368,14 +436,25 @@ mod tests {
     fn only_local_registered_does_not_claim_the_scheme_module() {
         let lines =
             ["   io.macfuse.app.fsmodule.macfuse-local(2.0)\tD20E163C\t2026-09-14\t/x.appex"];
-        let s = probe(false, None, None, &lines, None);
-        assert!(
-            s.iter()
-                .any(|b| b.backend == FuseBackend::FsKit && !b.available),
-            "the scheme module is absent here and must not be reported available"
-        );
-        assert!(s
+        let s = probe(false, None, None, &lines, None, false);
+        let scheme = s
             .iter()
-            .any(|b| b.backend == FuseBackend::FsKitLocal && b.available));
+            .find(|b| b.backend == FuseBackend::FsKit)
+            .expect("reported");
+        let local = s
+            .iter()
+            .find(|b| b.backend == FuseBackend::FsKitLocal)
+            .expect("reported");
+        assert!(
+            scheme.detail.contains("not registered"),
+            "only the local personality is present; the scheme module must not be \
+             claimed as registered: {:?}",
+            scheme.detail
+        );
+        assert!(
+            local.detail.contains("registered") && !local.detail.contains("not registered"),
+            "the local personality IS registered: {:?}",
+            local.detail
+        );
     }
 }

@@ -144,12 +144,10 @@ fn try_mount(backend: &str) -> Result<Mounted, String> {
 fn live_backends() -> Vec<forensic_mount::fuse_backend::BackendStatus> {
     use forensic_mount::fuse_backend::probe;
 
-    let dev_present = std::fs::read_dir("/dev")
-        .map(|d| {
-            d.flatten()
-                .any(|e| e.file_name().to_string_lossy().starts_with("macfuse"))
-        })
-        .unwrap_or(false);
+    let dev_present = std::fs::read_dir("/dev").is_ok_and(|d| {
+        d.flatten()
+            .any(|e| e.file_name().to_string_lossy().starts_with("macfuse"))
+    });
     let ver = |p: &str| -> Option<String> {
         let out = Command::new("/usr/bin/defaults")
             .args(["read", p, "CFBundleVersion"])
@@ -184,17 +182,19 @@ fn live_backends() -> Vec<forensic_mount::fuse_backend::BackendStatus> {
         installed.as_deref(),
         &modules,
         fuse_t,
+        cfg!(feature = "fuse-t"),
     )
 }
 
 fn cli_name(b: forensic_mount::fuse_backend::FuseBackend) -> &'static str {
     use forensic_mount::fuse_backend::FuseBackend as B;
     match b {
-        B::Auto => "auto",
         B::Kernel => "kernel",
         B::FsKit => "fskit",
         B::FsKitLocal => "fskit-local",
         B::FuseT => "fuse-t",
+        // FuseBackend is #[non_exhaustive]; Auto and anything added later mean
+        // "let libfuse decide".
         _ => "auto",
     }
 }
@@ -232,17 +232,17 @@ fn every_available_backend_really_mounts() {
         match try_mount(name) {
             Ok(m) => {
                 let got = mounted_names(&m.dir);
-                if got != expected {
-                    failures.push(format!(
-                        "{:?}: mounted but the tree differs\n    through FUSE: {got:?}\n    through VFS : {expected:?}",
-                        s.backend
-                    ));
-                } else {
+                if got == expected {
                     eprintln!(
                         "  {:?}: mounted, {} entries match the VFS layer",
                         s.backend,
                         got.len()
                     );
+                } else {
+                    failures.push(format!(
+                        "{:?}: mounted but the tree differs\n    through FUSE: {got:?}\n    through VFS : {expected:?}",
+                        s.backend
+                    ));
                 }
             }
             // CASE B — the positive control. The probe said available; it was

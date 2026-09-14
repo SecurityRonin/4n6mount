@@ -31,6 +31,11 @@ required-features = ["memory"]
 # reader is compiled in, so there are no per-format features to forward. Only
 # the memory-dump mount (memf) stays opt-in — it pulls a large analysis stack.
 default = []
+# Link FUSE-T's libfuse instead of macFUSE's. FUSE-T is a DIFFERENT library
+# implementing the same API, so it is selected at build time, never by a mount
+# option -- which is why --fuse-backend fuse-t reports unavailable unless this
+# feature is on.
+fuse-t = []
 memory = ["dep:memf-format", "dep:memf-core", "dep:memf-session", "dep:memf-symbols", "dep:memf-windows", "dep:memf-linux", "dep:forensic-vfs-resolver"]
 
 [dependencies]
@@ -45,7 +50,8 @@ clap = { version = "4", features = ["derive"] }
 # pins — two incompatible `FileSystem` traits -> E0277.) Registry (not a path dep)
 # so `cargo package`/release-plz can resolve it in isolation and the whole fleet
 # graph unifies on one version.
-forensic-vfs-engine = "0.1.7"
+# TEMP path dep: verifying unpublished L01 support end to end.
+forensic-vfs-engine = { path = "../forensic-vfs-engine" }
 # The `FileSystem` navigation contract + its `Fs*` value types. Registry version
 # (not a path dep) so it unifies with the copy the engine links — a path dep
 # would compile a second, incompatible `DynFs`/`FileId`.
