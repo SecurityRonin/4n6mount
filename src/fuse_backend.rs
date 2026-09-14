@@ -126,12 +126,19 @@ pub fn probe(
         }
     };
 
-    let has = |needle: &str| fskit_modules.iter().any(|m| m.contains(needle));
     // The two personalities register as separate modules, so one can be
-    // enabled and the other not. Reporting them together would claim a
-    // capability the machine may not have.
-    let scheme = has("fsmodule.macfuse") && !has_only_local(fskit_modules);
-    let local = has("fsmodule.macfuse-local");
+    // enabled and the other not; reporting them together would claim a
+    // capability the machine may not have. Match on the parsed BUNDLE ID, not
+    // on the raw line: "fsmodule.macfuse" is a prefix of
+    // "fsmodule.macfuse-local", and a real pluginkit line carries a version
+    // suffix and tab-separated columns after the identifier.
+    let ids: Vec<&str> = fskit_modules.iter().map(|m| bundle_id(m)).collect();
+    let scheme = ids
+        .iter()
+        .any(|id| *id == "io.macfuse.app.fsmodule.macfuse");
+    let local = ids
+        .iter()
+        .any(|id| *id == "io.macfuse.app.fsmodule.macfuse-local");
 
     vec![
         BackendStatus {
@@ -170,16 +177,23 @@ pub fn probe(
     ]
 }
 
-/// Whether the only macFUSE module present is the `-local` personality.
+/// The bundle identifier from a `pluginkit -mAv` line, or from a bare id.
 ///
-/// `"...fsmodule.macfuse-local"` contains `"fsmodule.macfuse"` as a substring,
-/// so a naive check reports the scheme module as present when only the local
-/// one is registered.
-fn has_only_local(modules: &[&str]) -> bool {
-    modules.iter().any(|m| m.contains("fsmodule.macfuse-local"))
-        && !modules
-            .iter()
-            .any(|m| m.trim_end().ends_with("fsmodule.macfuse"))
+/// A real line looks like:
+///
+/// ```text
+///    io.macfuse.app.fsmodule.macfuse(2.0)\t<uuid>\t<date>\t/path/to.appex
+/// ```
+///
+/// so the identifier is the first whitespace-delimited field with any `(version)`
+/// suffix removed. Accepting a bare identifier too keeps callers that already
+/// have one from having to fake a line.
+fn bundle_id(line: &str) -> &str {
+    let first = line.trim().split_whitespace().next().unwrap_or("");
+    match first.find('(') {
+        Some(i) => &first[..i],
+        None => first,
+    }
 }
 
 #[cfg(test)]
@@ -314,5 +328,54 @@ mod tests {
                 "{b:?} must be reported even when unavailable"
             );
         }
+    }
+
+    /// RED: the prober must handle REAL `pluginkit` output, not the tidy bundle
+    /// identifiers a hand-written test imagines.
+    ///
+    /// The first version of this module matched with `ends_with("fsmodule.macfuse")`,
+    /// which is true of a bare identifier and false of an actual pluginkit line:
+    ///
+    /// ```text
+    ///    io.macfuse.app.fsmodule.macfuse(2.0)\t63CF…\t2026-09-14 09:00:33 +0000\t/Library/…
+    /// ```
+    ///
+    /// It passed every synthetic test and then reported the scheme module as
+    /// missing on the first real machine it saw. Feeding verbatim tool output is
+    /// what makes this test able to catch that.
+    #[test]
+    fn real_pluginkit_lines_are_understood() {
+        let lines = [
+            "   io.macfuse.app.fsmodule.macfuse(2.0)\t63CF120B-A09D-464B-81AC-9FD974C5F66E\t2026-09-14 09:00:33 +0000\t/Library/Filesystems/macfuse.fs/Contents/Resources/macfuse.app/Contents/Extensions/io.macfuse.app.fsmodule.macfuse.appex",
+            "   io.macfuse.app.fsmodule.macfuse-local(2.0)\tD20E163C-267A-4712-9619-974739FEAA51\t2026-09-14 09:00:33 +0000\t/Library/Filesystems/macfuse.fs/Contents/Resources/macfuse.app/Contents/Extensions/io.macfuse.app.fsmodule.macfuse-local.appex",
+        ];
+        let s = probe(false, None, None, &lines, None);
+        assert!(
+            s.iter()
+                .any(|b| b.backend == FuseBackend::FsKit && b.available),
+            "the scheme module IS registered in this output and must be reported"
+        );
+        assert!(
+            s.iter()
+                .any(|b| b.backend == FuseBackend::FsKitLocal && b.available),
+            "and so is the local personality"
+        );
+    }
+
+    /// RED: with ONLY the local personality registered, the scheme module must
+    /// not be claimed — the substring trap in the other direction.
+    #[test]
+    fn only_local_registered_does_not_claim_the_scheme_module() {
+        let lines =
+            ["   io.macfuse.app.fsmodule.macfuse-local(2.0)\tD20E163C\t2026-09-14\t/x.appex"];
+        let s = probe(false, None, None, &lines, None);
+        assert!(
+            s.iter()
+                .any(|b| b.backend == FuseBackend::FsKit && !b.available),
+            "the scheme module is absent here and must not be reported available"
+        );
+        assert!(s
+            .iter()
+            .any(|b| b.backend == FuseBackend::FsKitLocal && b.available));
     }
 }

@@ -25,6 +25,16 @@ pub fn mount_unix(
     if options.read_only {
         fuse_options.push(fuser::MountOption::RO);
     }
+    // macFUSE's libfuse takes `backend=` to pick between its kernel extension
+    // and its FSKit module. Only pass it when the caller asked for something
+    // specific: an unconditional `backend=auto` would be rejected outright by
+    // a libfuse that predates the option, breaking every existing install.
+    #[cfg(target_os = "macos")]
+    if options.fuse_backend != crate::fuse_backend::FuseBackend::Auto {
+        if let Some(opt) = options.fuse_backend.mount_option() {
+            fuse_options.push(fuser::MountOption::CUSTOM(opt.to_string()));
+        }
+    }
 
     if options.daemon {
         let _session = fuser::spawn_mount2(fuse_fs, mountpoint, &fuse_options)?;
@@ -77,6 +87,7 @@ mod tests {
             fs_name: "ext4fs".to_string(),
             layout: crate::MountLayout::DiskOverlay,
             deleted_mode: crate::DeletedMode::default(),
+            fuse_backend: crate::fuse_backend::FuseBackend::default(),
         };
         assert!(opts.read_only);
         assert!(opts.daemon);
