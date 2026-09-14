@@ -4,6 +4,7 @@
 // `unwrap_used`/`expect_used` denies.
 #![cfg_attr(test, allow(clippy::unwrap_used, clippy::expect_used))]
 
+pub mod fuse_backend;
 pub mod detect;
 pub mod filter;
 #[cfg(unix)]
