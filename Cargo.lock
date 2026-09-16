@@ -1311,9 +1311,7 @@ dependencies = [
 
 [[package]]
 name = "ewf"
-version = "0.4.9"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "91ed8c21f060b936723663fe832dcbe25edac7c0a4f323b308033132f5d075ca"
+version = "0.4.10"
 dependencies = [
  "adler2",
  "flate2",
@@ -1507,15 +1505,13 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "285cbb38f775a1c3c476e7e20bffea29eea6a62f73e0721957c04cb3867d1fa6"
 dependencies = [
  "forensicnomicon-core",
- "state-history-forensic",
+ "state-history-forensic 0.1.0",
  "thiserror 2.0.19",
 ]
 
 [[package]]
 name = "forensic-vfs-engine"
-version = "0.1.7"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "634ba222162104e677edf18f216df73bbeb556c7ee16244d44a844b5f2881952"
+version = "0.1.9"
 dependencies = [
  "ad1-core",
  "aff4",
@@ -1535,9 +1531,10 @@ dependencies = [
  "hfsplus-forensic",
  "iso9660-forensic",
  "luks-core",
+ "md-5",
  "ntfs-core",
  "qcow2-core",
- "state-history-forensic",
+ "state-history-forensic 0.2.2",
  "udf-forensic",
  "ufs-core",
  "veracrypt-core",
@@ -1545,6 +1542,7 @@ dependencies = [
  "vhdx-core",
  "vmdk-core",
  "xfs-core",
+ "zfs-forensic-core",
 ]
 
 [[package]]
@@ -1554,7 +1552,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2e41e140c22b5599f470ec33cfc4dd63ba887a13cacfc69567b08156847f1ecc"
 dependencies = [
  "forensic-vfs",
- "state-history-forensic",
+ "state-history-forensic 0.1.0",
 ]
 
 [[package]]
@@ -3618,6 +3616,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "06d95f05c0dd49a5dfae0eb6cb6fae7bb3bd5c1f787300c94a3a5adecb44d98f"
 
 [[package]]
+name = "state-history-forensic"
+version = "0.2.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3d4644e19f8beba3fe9d74c6a3b985e242d0c1b5920ecf4a24f6c4b1451a05af"
+dependencies = [
+ "forensicnomicon-core",
+]
+
+[[package]]
 name = "static_assertions"
 version = "1.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4911,6 +4918,20 @@ name = "zeroize"
 version = "1.9.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e13c156562582aa81c60cb29407084cdb54c4164760106ab78e6c5b0858cf64e"
+
+[[package]]
+name = "zfs-forensic-core"
+version = "0.1.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0fe318f70e774a765d2016b8afba6b0e8fbe854a943bf59398fc7a93fba44de8"
+dependencies = [
+ "flate2",
+ "forensic-vfs",
+ "lz4_flex",
+ "ruzstd 0.8.3",
+ "sha2 0.10.9",
+ "thiserror 2.0.19",
+]
 
 [[package]]
 name = "zip"
