@@ -1,10 +1,15 @@
-# Statically link the MSVC C runtime on Windows so the binary has no
-# vcruntime140.dll / msvcp140.dll dependency on the target machine (important
-# for a portable forensic tool, and for x64 binaries running under ARM64
-# Windows emulation where the x64 VC runtime may be absent). The Dokan runtime
-# DLL is still required at runtime — install the Dokany library on the target.
-[target.x86_64-pc-windows-msvc]
-rustflags = ["-C", "target-feature=+crt-static"]
-
-[target.aarch64-pc-windows-msvc]
-rustflags = ["-C", "target-feature=+crt-static"]
+# The rpath FUSE-T builds need.
+#
+# cargo forwards `-L` and `-l` from pkg-config but DROPS `-Wl,-rpath`, so a
+# FUSE-T build links correctly and then dies at startup with
+# `dyld: Library not loaded ... no LC_RPATH's found`. Setting it here is
+# harmless for macFUSE builds (the path simply goes unused).
+#
+# PKG_CONFIG_PATH is deliberately NOT set here. Cargo's `[env]` can only set or
+# replace, never append, and PKG_CONFIG_PATH is a colon-separated list that must
+# compose: this machine already exports the e2fsprogs path, which ext4 support
+# needs. `force = true` would silently break ext4; `force = false` is ignored
+# whenever the variable is already set. See packaging/fuse-t/README.md for the
+# build command that composes correctly.
+[target.'cfg(target_os = "macos")']
+rustflags = ["-C", "link-arg=-Wl,-rpath,/usr/local/lib"]

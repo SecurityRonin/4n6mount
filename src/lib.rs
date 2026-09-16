@@ -168,8 +168,6 @@ pub struct MountOptions {
     pub layout: MountLayout,
     /// How the `deleted/` view is populated.
     pub deleted_mode: DeletedMode,
-    /// Which FUSE mechanism carries the mount.
-    pub fuse_backend: fuse_backend::FuseBackend,
 }
 
 impl Default for MountOptions {
@@ -180,7 +178,6 @@ impl Default for MountOptions {
             fs_name: "4n6mount".to_string(),
             layout: MountLayout::DiskOverlay,
             deleted_mode: DeletedMode::default(),
-            fuse_backend: fuse_backend::FuseBackend::default(),
         }
     }
 }

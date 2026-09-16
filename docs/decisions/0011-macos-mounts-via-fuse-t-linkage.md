@@ -1,7 +1,7 @@
 # 11. On macOS the FUSE mechanism is chosen by LINKAGE, not by a flag or a feature — and on macOS 27 that mechanism is FUSE-T
 
 Date: 2026-09-16
-Status: Accepted — FUSE-T build verified end to end; `--fuse-backend` retained for diagnosis, not selection
+Status: Accepted — FUSE-T build verified end to end; `--fuse-backend` removed, `--list-fuse-backends` retained
 
 ## Context
 
@@ -68,7 +68,19 @@ describes the **API level provided**, not the product.
 
 ## Consequences
 
-### `--fuse-backend` REFUSES what it cannot serve; it does not select
+### `--fuse-backend` is REMOVED; `--list-fuse-backends` remains
+
+The flag could not select anything — the mechanism is fixed at link time — so
+its only behaviour was to refuse. A flag named "choose the backend" that never
+changes what happens is a trap: a user reaches for it precisely when a mount
+fails, and it tells them no. It was unreleased (no tag contained it), so removal
+cost nothing.
+
+`--list-fuse-backends` answers the real question and now reports from LINKAGE,
+not inventory: a FUSE-T-linked binary says `Kernel unavailable — this binary
+links FUSE-T`, even with a healthy kext and `/dev/macfuse0` present.
+
+The superseded design refused mismatches instead:
 
 The mechanism is fixed at link time, so the flag cannot switch it. Before this
 was enforced, `--fuse-backend kernel` on a FUSE-T build mounted through FUSE-T
@@ -90,15 +102,36 @@ option at all; that name was inferred from a `backend=%s` format string inside
 variant is reachable, so adding a backend fails to compile until someone decides
 how it is served — a `_` arm would silently refuse it instead.
 
-### Genuine runtime selection, if it is ever wanted
+### Genuine runtime selection — investigated and rejected
 
-Two routes exist and neither is taken here:
+`fuser` 0.18 offers `macos-no-mount`, where the caller supplies the `/dev/fuse`
+descriptor via `Session::from_fd` and fuser keeps the 9,649-line protocol layer.
+Both libraries mention `_FUSE_COMMFD`, libfuse's socketpair + `SCM_RIGHTS`
+handshake, which `nix` already wraps **safely** — so the fd could in principle be
+obtained with no `unsafe`, important in a crate that is `#![forbid(unsafe_code)]`
+in every module with zero exceptions.
 
-- **one binary per linkage**, with a launcher that execs the right one
-- **drop `fuser`** and drive the libfuse C API through `dlopen`, choosing the
-  library at run time
+**A spike killed it.** FUSE-T has no external mount helper to exec:
 
-Both are real work. Refusing honestly costs nothing and comes first.
+```
+fuse: socketpair() failed          ← libfuse-t creates the pair itself
+fuse: fork failed
+/usr/local/bin/go-nfsv4            ← forks its own NFS server
+```
+
+The descriptor is created *inside* `fuse_mount()`, one end of a socketpair whose
+other end feeds FUSE-T's NFS translator. There is no handshake to join from
+outside. Obtaining it means calling `fuse_mount()` through FFI — the `unsafe`
+the COMMFD route existed to avoid — or reimplementing FUSE-T's undocumented
+internal protocol inside a forensic tool.
+
+So runtime selection would reach **macFUSE only**: the mechanism that does not
+work here. The cost is `unsafe` FFI or an undocumented dependency; the benefit
+is choosing between one broken backend and nothing. Not built.
+
+The `fuser` 0.18 upgrade is likewise unmotivated — its only payoff was
+`macos-no-mount`, and 0.18 was measured failing identically to 0.16 against
+macFUSE.
 
 ### Capability is detected, never declared
 

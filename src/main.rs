@@ -30,14 +30,6 @@ struct Cli {
     #[arg(long, value_enum, default_value_t = forensic_mount::DeletedMode::Latest)]
     deleted: forensic_mount::DeletedMode,
 
-    /// Which FUSE mechanism to mount with: `auto` (default), `kernel` (the
-    /// macFUSE kext), `fskit`, `fskit-local`, or `fuse-t`.
-    ///
-    /// They are not interchangeable, and a machine can have one working and
-    /// another not. `--list-fuse-backends` reports what this one has.
-    #[arg(long, value_parser = parse_fuse_backend, default_value = "auto")]
-    fuse_backend: forensic_mount::fuse_backend::FuseBackend,
-
     /// Report which FUSE mechanisms this machine can mount with, and why not
     /// where it cannot, then exit.
     #[arg(long)]
@@ -83,16 +75,6 @@ fn main() {
     if cli.list_fuse_backends {
         report_fuse_backends();
         return;
-    }
-
-    // The FUSE mechanism is fixed when this binary is linked, so a request the
-    // linkage cannot serve must be refused here rather than silently mounted
-    // through whatever happens to be linked.
-    if let Err(e) =
-        forensic_mount::fuse_backend::check_selectable(cli.fuse_backend, env!("FUSE_LINKED_LIB"))
-    {
-        eprintln!("{e}");
-        std::process::exit(2);
     }
 
     // Handle export-session
@@ -202,7 +184,6 @@ fn main() {
         fs_name: "4n6mount".to_string(),
         layout: forensic_mount::MountLayout::DiskOverlay,
         deleted_mode: cli.deleted,
-        fuse_backend: cli.fuse_backend,
     };
 
     eprintln!("Mounting {image} at {mountpoint}");
@@ -236,7 +217,6 @@ fn route_memory_mount(image: &str, mountpoint: &str, symbols: Option<&str>, daem
         layout: forensic_mount::MountLayout::Raw,
         // A memory dump exposes no deleted-file recovery surface.
         deleted_mode: forensic_mount::DeletedMode::Off,
-        fuse_backend: cli.fuse_backend,
     };
     eprintln!("Mounting memory dump {image} at {mountpoint}");
     forensic_mount::mount(fs, std::path::Path::new(mountpoint), None, &options).unwrap_or_else(
@@ -255,11 +235,6 @@ fn route_memory_mount(_image: &str, _mountpoint: &str, _symbols: Option<&str>, _
          Rebuild with `--features memory`."
     );
     std::process::exit(1);
-}
-
-/// clap adaptor for [`forensic_mount::fuse_backend::FuseBackend`].
-fn parse_fuse_backend(s: &str) -> Result<forensic_mount::fuse_backend::FuseBackend, String> {
-    forensic_mount::fuse_backend::FuseBackend::parse(s)
 }
 
 /// Probe the live machine and report every FUSE mechanism.
@@ -315,6 +290,7 @@ fn report_fuse_backends() {
 
     println!("FUSE mechanisms on this machine:\n");
     for b in probe(
+        env!("FUSE_LINKED_LIB"),
         dev_present,
         staged.as_deref(),
         installed.as_deref(),

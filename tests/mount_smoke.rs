@@ -121,8 +121,6 @@ fn try_mount(backend: &str) -> Result<Mounted, String> {
     let err = out.try_clone().map_err(|e| format!("log dup: {e}"))?;
 
     let child = Command::new(binary())
-        .arg("--fuse-backend")
-        .arg(backend)
         .arg(fixture())
         .arg(&dir)
         .stdout(out)
@@ -187,6 +185,7 @@ fn live_backends() -> Vec<forensic_mount::fuse_backend::BackendStatus> {
     .find(|p| p.exists());
 
     probe(
+        option_env!("FUSE_LINKED_LIB").unwrap_or("macfuse"),
         dev_present,
         staged.as_deref(),
         installed.as_deref(),
@@ -236,21 +235,9 @@ fn every_available_backend_really_mounts() {
         "the VFS oracle must list entries, or this test proves nothing"
     );
 
-    let linked = option_env!("FUSE_LINKED_LIB").unwrap_or("macfuse");
     let mut failures = Vec::new();
     for s in available {
-        // Only the mechanism this binary links can actually be served; asking
-        // for another is now refused by the CLI, so testing it would assert the
-        // refusal, not the mount.
-        if forensic_mount::fuse_backend::check_selectable(s.backend, linked).is_err() {
-            eprintln!(
-                "  {:?}: reported available on this machine, but this binary links {linked}",
-                s.backend
-            );
-            continue;
-        }
-        let name = cli_name(s.backend);
-        match try_mount(name) {
+        match try_mount(cli_name(s.backend)) {
             Ok(m) => {
                 let got = mounted_names(&m.dir);
                 if got == expected {

@@ -17,17 +17,19 @@ libfuse2 API `fuser` calls, so it is a drop-in at the linker.
 ```bash
 brew install --cask fuse-t
 
-PKG_CONFIG_PATH="$PWD/packaging/fuse-t" \
-RUSTFLAGS="-C link-arg=-Wl,-rpath,/usr/local/lib" \
-cargo build --release
+PKG_CONFIG_PATH="$PWD/packaging/fuse-t:$PKG_CONFIG_PATH" cargo build --release
 ```
 
-Both parts are required:
+**PREPEND, do not replace.** `PKG_CONFIG_PATH` is a colon-separated list and
+this repository needs other entries on it — notably Homebrew's `e2fsprogs`, for
+ext4. Overwriting it builds a binary that has FUSE-T and has lost ext4 support,
+which fails far from here.
 
-- `PKG_CONFIG_PATH` makes `fuser` resolve `fuse` to FUSE-T.
-- `RUSTFLAGS` adds the rpath. **cargo forwards `-L` and `-l` from pkg-config but
-  drops `-Wl,-rpath`**, so without this the binary links correctly and then dies
-  at startup with `dyld: Library not loaded ... no LC_RPATH's found`.
+That is also why `.cargo/config.toml` does not set it: cargo's `[env]` can only
+set or replace, never append. It does set the rpath, which is required —
+**cargo forwards `-L` and `-l` from pkg-config but drops `-Wl,-rpath`**, so
+without it the binary links correctly and then dies at startup with
+`dyld: Library not loaded ... no LC_RPATH's found`.
 
 ## Verify
 
