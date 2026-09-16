@@ -221,6 +221,26 @@ fn bundle_id(line: &str) -> &str {
     }
 }
 
+/// Whether `requested` can actually be served by the library this binary links.
+///
+/// `fuser` links ONE `libfuse` at build time and that choice fixes the
+/// mechanism, so a runtime flag cannot switch it. Before this check,
+/// `--fuse-backend kernel` on a FUSE-T build mounted through FUSE-T and
+/// reported success — answering a question it could not act on, which is the
+/// same defect as a feature flag that changes no linkage.
+///
+/// `linked` is what `build.rs` recorded from `pkg-config` (`"fuse-t"` or
+/// `"macfuse"`).
+///
+/// # Errors
+/// A message naming what was asked for, what is linked, and how to get the
+/// requested mechanism — a refusal that does not say how to proceed just moves
+/// the confusion.
+pub fn check_selectable(requested: FuseBackend, linked: &str) -> Result<(), String> {
+    let _ = (requested, linked);
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -456,5 +476,73 @@ mod tests {
             "the local personality IS registered: {:?}",
             local.detail
         );
+    }
+
+    /// RED: asking for a mechanism this binary cannot provide must be REFUSED,
+    /// not silently served by whichever library happens to be linked.
+    ///
+    /// On a FUSE-T build, `--fuse-backend kernel` previously mounted through
+    /// FUSE-T and reported success. An examiner who selected a mechanism
+    /// deliberately — to reproduce a result, or to avoid one — was told they got
+    /// it and did not.
+    #[test]
+    fn requesting_a_backend_the_binary_cannot_serve_is_refused() {
+        let e = check_selectable(FuseBackend::Kernel, "fuse-t")
+            .expect_err("a FUSE-T build cannot serve the kernel backend");
+        assert!(
+            e.contains("fuse-t") && e.to_lowercase().contains("kernel"),
+            "the error must name BOTH what was asked and what is linked: {e:?}"
+        );
+        assert!(
+            e.contains("rebuild") || e.contains("PKG_CONFIG_PATH"),
+            "and must say how to get the requested mechanism: {e:?}"
+        );
+    }
+
+    /// RED: and the mirror — a macFUSE build cannot serve FUSE-T.
+    #[test]
+    fn a_macfuse_build_refuses_fuse_t() {
+        assert!(
+            check_selectable(FuseBackend::FuseT, "macfuse").is_err(),
+            "a binary linking macFUSE cannot reach FUSE-T"
+        );
+    }
+
+    /// RED: the matching request is allowed, and so is `auto`, which expresses
+    /// no preference and therefore cannot conflict with the linkage.
+    #[test]
+    fn a_matching_request_and_auto_are_allowed() {
+        assert!(check_selectable(FuseBackend::FuseT, "fuse-t").is_ok());
+        assert!(check_selectable(FuseBackend::Kernel, "macfuse").is_ok());
+        assert!(check_selectable(FuseBackend::Auto, "fuse-t").is_ok());
+        assert!(check_selectable(FuseBackend::Auto, "macfuse").is_ok());
+    }
+
+    /// RED: FSKit is not reachable through libfuse at all, from either build.
+    ///
+    /// It is a different programming model (Swift/ObjC `FSModule`), not a
+    /// library this crate can link, so no build can serve it today.
+    #[test]
+    fn fskit_is_refused_from_every_build_because_it_is_not_a_libfuse_backend() {
+        for linked in ["macfuse", "fuse-t"] {
+            for b in [FuseBackend::FsKit, FuseBackend::FsKitLocal] {
+                let e = check_selectable(b, linked)
+                    .unwrap_err_or_else_msg();
+                assert!(
+                    e.to_lowercase().contains("fskit"),
+                    "{b:?} on {linked} must be refused by name: {e:?}"
+                );
+            }
+        }
+    }
+
+    /// Helper: `expect_err` with a message that names the case.
+    trait UnwrapErrMsg {
+        fn unwrap_err_or_else_msg(self) -> String;
+    }
+    impl UnwrapErrMsg for Result<(), String> {
+        fn unwrap_err_or_else_msg(self) -> String {
+            self.expect_err("this combination must be refused")
+        }
     }
 }
