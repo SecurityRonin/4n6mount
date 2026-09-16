@@ -237,8 +237,39 @@ fn bundle_id(line: &str) -> &str {
 /// requested mechanism — a refusal that does not say how to proceed just moves
 /// the confusion.
 pub fn check_selectable(requested: FuseBackend, linked: &str) -> Result<(), String> {
-    let _ = (requested, linked);
-    Ok(())
+    let want = match requested {
+        // No preference expressed, so nothing can conflict.
+        FuseBackend::Auto => return Ok(()),
+        FuseBackend::Kernel => "macfuse",
+        FuseBackend::FuseT => "fuse-t",
+        // FSKit is not a libfuse backend at all: it is a separate programming
+        // model (Swift/ObjC FSModule), not a library this crate can link. No
+        // build can serve it, so say that rather than implying a rebuild would.
+        FuseBackend::FsKit | FuseBackend::FsKitLocal => {
+            return Err(format!(
+                "--fuse-backend {requested:?} cannot be served: FSKit is not a libfuse \
+                 backend but a separate Apple programming model (FSModule), so no build \
+                 of this binary can reach it. Use --list-fuse-backends to see what this \
+                 machine offers."
+            ))
+        } // Deliberately NO catch-all: inside the defining crate every variant
+          // is reachable, so adding a backend must fail to compile here until
+          // someone decides how it is served. A `_` arm would silently refuse it.
+    };
+
+    if want == linked {
+        return Ok(());
+    }
+    // Name both sides and the remedy: the mechanism is fixed at LINK time, so
+    // "wrong flag" is the wrong diagnosis and re-running with another value
+    // will not help.
+    Err(format!(
+        "--fuse-backend {requested:?} needs a binary linked against {want}, but this one \
+         links {linked}. The FUSE mechanism is fixed when the binary is linked, not at \
+         run time, so no flag can switch it. Rebuild with \
+         PKG_CONFIG_PATH=packaging/fuse-t (see packaging/fuse-t/README.md) for fuse-t, \
+         or without it for macfuse."
+    ))
 }
 
 #[cfg(test)]
@@ -518,7 +549,7 @@ mod tests {
         assert!(check_selectable(FuseBackend::Auto, "macfuse").is_ok());
     }
 
-    /// RED: FSKit is not reachable through libfuse at all, from either build.
+    /// RED: `FSKit` is not reachable through libfuse at all, from either build.
     ///
     /// It is a different programming model (Swift/ObjC `FSModule`), not a
     /// library this crate can link, so no build can serve it today.
@@ -526,8 +557,7 @@ mod tests {
     fn fskit_is_refused_from_every_build_because_it_is_not_a_libfuse_backend() {
         for linked in ["macfuse", "fuse-t"] {
             for b in [FuseBackend::FsKit, FuseBackend::FsKitLocal] {
-                let e = check_selectable(b, linked)
-                    .unwrap_err_or_else_msg();
+                let e = check_selectable(b, linked).unwrap_err_or_else_msg();
                 assert!(
                     e.to_lowercase().contains("fskit"),
                     "{b:?} on {linked} must be refused by name: {e:?}"

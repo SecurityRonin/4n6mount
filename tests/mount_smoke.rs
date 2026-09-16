@@ -236,8 +236,19 @@ fn every_available_backend_really_mounts() {
         "the VFS oracle must list entries, or this test proves nothing"
     );
 
+    let linked = option_env!("FUSE_LINKED_LIB").unwrap_or("macfuse");
     let mut failures = Vec::new();
     for s in available {
+        // Only the mechanism this binary links can actually be served; asking
+        // for another is now refused by the CLI, so testing it would assert the
+        // refusal, not the mount.
+        if forensic_mount::fuse_backend::check_selectable(s.backend, linked).is_err() {
+            eprintln!(
+                "  {:?}: reported available on this machine, but this binary links {linked}",
+                s.backend
+            );
+            continue;
+        }
         let name = cli_name(s.backend);
         match try_mount(name) {
             Ok(m) => {

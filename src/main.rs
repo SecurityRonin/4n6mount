@@ -85,6 +85,16 @@ fn main() {
         return;
     }
 
+    // The FUSE mechanism is fixed when this binary is linked, so a request the
+    // linkage cannot serve must be refused here rather than silently mounted
+    // through whatever happens to be linked.
+    if let Err(e) =
+        forensic_mount::fuse_backend::check_selectable(cli.fuse_backend, env!("FUSE_LINKED_LIB"))
+    {
+        eprintln!("{e}");
+        std::process::exit(2);
+    }
+
     // Handle export-session
     if let Some(session_dir) = &cli.export_session {
         let output = cli.output.as_deref().unwrap_or_else(|| {
