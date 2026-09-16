@@ -1,0 +1,25 @@
+# pkg-config shim that makes `fuser` link FUSE-T instead of macFUSE.
+#
+# fuser's build.rs probes `pkg-config fuse` on macOS and links whatever it
+# finds. By default that is macFUSE's libfuse2 compatibility library, which on
+# macOS 27 cannot mount at all (verified: four independent libfuse2 clients,
+# including libewf's own ewfmount, all fail).
+#
+# FUSE-T exports the same libfuse2 entry points fuser calls --
+#   _fuse_mount  _fuse_new_compat25  _fuse_loop  _fuse_main_real
+# -- so pointing this name at it needs no code change anywhere.
+#
+# The Version is set to macFUSE's 2.9.9 rather than FUSE-T's own 1.2.7 because
+# fuser requires `atleast_version("2.6.0")`; FUSE-T's real version would fail
+# that check even though its ABI is the one being asked for. The number
+# describes the API level provided, not the product.
+prefix=/usr/local
+exec_prefix=${prefix}
+libdir=${prefix}/lib
+includedir=${prefix}/include/fuse
+
+Name: fuse
+Description: FUSE-T presented under the libfuse2 name fuser probes for
+Version: 2.9.9
+Libs: -L${libdir} -lfuse-t
+Cflags: -I${includedir}

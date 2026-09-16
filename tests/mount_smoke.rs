@@ -67,8 +67,18 @@ fn vfs_root_names() -> Vec<String> {
     names
 }
 
-/// Entries visible through the mounted path.
+/// Entries visible through the mounted path, at the filesystem root.
+///
+/// 4n6mount presents a FORENSIC LAYOUT at the mount point -- `ro/`, `rw/`,
+/// `journal/`, `metadata/`, `session/`, `unallocated/` -- and puts the image's
+/// own filesystem under `ro/root/`. Comparing the mount point itself against
+/// the VFS layer's root therefore compares two different things and can never
+/// match; the first version of this test did exactly that and reported a
+/// successful mount as a failure.
 fn mounted_names(dir: &Path) -> Vec<String> {
+    // Prefer the evidence root when the forensic layout is present.
+    let evidence = dir.join("ro").join("root");
+    let dir = if evidence.is_dir() { &evidence } else { dir };
     let mut names: Vec<String> = std::fs::read_dir(dir)
         .map(|rd| {
             rd.flatten()
@@ -182,7 +192,7 @@ fn live_backends() -> Vec<forensic_mount::fuse_backend::BackendStatus> {
         installed.as_deref(),
         &modules,
         fuse_t,
-        cfg!(feature = "fuse-t"),
+        option_env!("FUSE_LINKED_LIB").unwrap_or("macfuse") == "fuse-t",
     )
 }
 

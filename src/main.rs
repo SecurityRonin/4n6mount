@@ -298,10 +298,10 @@ fn report_fuse_backends() {
     .map(std::path::Path::new)
     .find(|p| p.exists());
 
-    // What this BINARY was built against — the only thing that makes FUSE-T
-    // reachable. A copy installed on disk cannot be reached by a binary linking
-    // macFUSE's libfuse, so presence and capability are reported separately.
-    let linked_fuse_t = cfg!(feature = "fuse-t");
+    // What this BINARY actually links, recorded by build.rs from pkg-config.
+    // NOT a cargo feature: a feature is a request, and one that changed no
+    // linkage would make this probe claim FUSE-T while macFUSE is linked.
+    let linked_fuse_t = env!("FUSE_LINKED_LIB") == "fuse-t";
 
     println!("FUSE mechanisms on this machine:\n");
     for b in probe(

@@ -2,6 +2,10 @@
 //!
 //! If this mounts and 4n6mount does not, the fault is ours. If neither mounts,
 //! it is macFUSE or `fuser`, and no amount of work in this repo will fix it.
+
+// Diagnostic example: panicking on bad usage is the whole interface.
+#![allow(clippy::expect_used, clippy::unwrap_used)]
+
 use fuser::{FileAttr, FileType, Filesystem, MountOption, ReplyAttr, ReplyDirectory, Request};
 use std::time::{Duration, UNIX_EPOCH};
 

@@ -31,11 +31,10 @@ required-features = ["memory"]
 # reader is compiled in, so there are no per-format features to forward. Only
 # the memory-dump mount (memf) stays opt-in — it pulls a large analysis stack.
 default = []
-# Link FUSE-T's libfuse instead of macFUSE's. FUSE-T is a DIFFERENT library
-# implementing the same API, so it is selected at build time, never by a mount
-# option -- which is why --fuse-backend fuse-t reports unavailable unless this
-# feature is on.
-fuse-t = []
+# NOTE: there is deliberately no `fuse-t` feature. Which libfuse is linked is
+# decided by pkg-config at build time (see packaging/fuse-t/README.md) and
+# detected by build.rs, because a feature flag can be switched on without
+# changing a single byte of linkage -- and then the probe lies.
 memory = ["dep:memf-format", "dep:memf-core", "dep:memf-session", "dep:memf-symbols", "dep:memf-windows", "dep:memf-linux", "dep:forensic-vfs-resolver"]
 
 [dependencies]
