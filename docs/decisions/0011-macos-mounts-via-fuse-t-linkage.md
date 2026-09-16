@@ -181,3 +181,78 @@ unreachable — when FUSE-T's *exported symbols* said otherwise the whole time.
 
 A 40-line FUSE program answers "is it us?" in one command, and should be the
 first thing run when a mount fails. It is kept at `examples/minfuse.rs`.
+
+
+## Addendum: FSKit, assessed but not built
+
+FSKit is Apple's kext-free filesystem framework and is genuinely better than
+FUSE-T on the axes that matter to a forensic reader:
+
+| | FUSE-T | FSKit |
+|---|---|---|
+| Path to the kernel | loopback **NFS** | native VFS |
+| Vendor | third party | Apple, first-party |
+| Metadata fidelity | NFS's attribute model | native |
+| macOS majors | fine today | the supported path |
+
+The fidelity row is the real argument. A forensic tool presents timestamps,
+ownership and extended attributes *as evidence*, and NFS is a lossy intermediary
+for exactly those — see the measured losses below.
+
+**It is still the wrong shape for this project.** Evidence from this session:
+macFUSE's FSKit support is two `.appex` bundles inside `macfuse.app`, registered
+with `pluginkit` and enabled by the user in System Settings. So FSKit means a
+Swift/ObjC app extension, an app bundle, code signing, notarization and a user
+toggle — against a tool that is a single static binary installed with
+`cargo install` or `brew install`. That is the same objection
+[ADR-0014](../../../../docs/decisions/0014-fleet-gui-standard-egui.md) raises
+against Tauri, plus a second implementation in another language behind an FFI
+boundary, and macOS 15.4+ only.
+
+**Revisit when** a wrong timestamp or a dropped attribute reaches a report. That
+turns FSKit from an improvement into a correctness requirement, which is a
+different decision.
+
+## Addendum: what the NFS round trip actually loses
+
+`tests/nfs_semantics.rs` compares every entry as the image states it against the
+same entry `stat`ed through the mount, across all three committed filesystem
+images. Measured on macOS 27 with FUSE-T, 10 entries:
+
+```
+disagreements by field: {"atime": 4, "uid": 3, "gid": 3, "present": 1}
+
+  hello.txt     atime  — image -2082844800.000000000, mounted 0.000000000
+  sub           atime  — image -2082844800.000000000, mounted 0.000000000
+  sub/deep.txt  atime  — image -2082844800.000000000, mounted 0.000000000
+  hello.txt     uid    — image 99, mounted 501
+  hello.txt     gid    — image 99, mounted 20
+  ...
+  "HFS+ Private Data"  present — image yes, mounted MISSING
+```
+
+Three distinct classes, and each matters differently:
+
+- **Pre-1970 timestamps collapse to epoch 0.** `-2082844800` is 1904-01-01, the
+  HFS+ epoch — an unset access time. Through the mount it becomes 1970-01-01,
+  which is a *different claim*: "never accessed" rendered as a date.
+- **Ownership is replaced with the mounting user's.** uid 99 / gid 99 in the
+  image become 501 / 20 — whoever ran the mount. An examiner reading ownership
+  off the mount reads their own account, not the evidence.
+- **An entry present in the image is missing from the mount.** `HFS+ Private
+  Data` — a filesystem-internal directory whose name begins with four NUL-ish
+  bytes. Whether hiding it is right is arguable; doing so *silently* is not.
+
+File **contents** are byte-exact (6 files compared), and `listxattr` never errors
+— so data integrity survives. It is metadata that does not.
+
+**None of this is FUSE-T behaving badly**; it is what an NFS attribute model can
+carry. It is also the strongest available argument for FSKit, and the reason the
+addendum above says "revisit when a wrong timestamp reaches a report" — three of
+them already reach the mount.
+
+The test **pins this exact shape** rather than committing red or asserting a
+fidelity we do not have. It stays green while the limitation is unchanged and
+goes red the moment it moves in either direction — a FUSE-T release that
+preserved ownership would fail here, and that failure is the news. A permanently
+red check trains readers to ignore it; a green one here would be a false claim.
