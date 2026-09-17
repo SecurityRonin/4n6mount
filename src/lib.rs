@@ -70,6 +70,27 @@ pub trait ForensicFs {
     /// Read the target of a symbolic link.
     fn read_link(&mut self, ino: u64) -> FsResult<Vec<u8>>;
 
+    /// Extended attributes on `ino`, as `(name, value)` pairs.
+    ///
+    /// Extended attributes are evidence. On macOS they carry the quarantine
+    /// flag, Finder metadata and decmpfs; on Windows the equivalent named
+    /// streams carry Zone.Identifier. A mount that cannot serve them tells an
+    /// examiner who runs `xattr -l` that a file has none, which is a negative
+    /// finding manufactured by the reader.
+    ///
+    /// The default returns an empty list so a filesystem that genuinely has no
+    /// concept of them needs no impl. That default is also why callers must not
+    /// read "no attributes" as "none in the evidence" without checking that the
+    /// backing reader implements this.
+    ///
+    /// # Errors
+    /// Whatever the backing reader reports; an unreadable attribute is an error,
+    /// never a silent omission.
+    fn xattrs(&mut self, _ino: u64) -> FsResult<Vec<(Vec<u8>, Vec<u8>)>> {
+        Ok(Vec::new())
+    }
+
+
     // --- Forensic ops (optional) ---
 
     /// List deleted inodes.
