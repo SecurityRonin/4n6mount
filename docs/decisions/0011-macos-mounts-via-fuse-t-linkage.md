@@ -220,36 +220,54 @@ same entry `stat`ed through the mount, across all three committed filesystem
 images. Measured on macOS 27 with FUSE-T, 10 entries:
 
 ```
-disagreements by field: {"atime": 4, "uid": 3, "gid": 3, "present": 1}
+disagreements by field: {"uid": 3, "gid": 3, "present": 1}
 
-  hello.txt     atime  — image -2082844800.000000000, mounted 0.000000000
-  sub           atime  — image -2082844800.000000000, mounted 0.000000000
-  sub/deep.txt  atime  — image -2082844800.000000000, mounted 0.000000000
   hello.txt     uid    — image 99, mounted 501
   hello.txt     gid    — image 99, mounted 20
   ...
   "HFS+ Private Data"  present — image yes, mounted MISSING
 ```
 
-Three distinct classes, and each matters differently:
+**The first version of this section blamed NFS for all of it, and was wrong.**
+It also listed `atime: 4` — pre-1970 timestamps rendered as 1970-01-01. That was
+**our** defect, not the transport's:
 
-- **Pre-1970 timestamps collapse to epoch 0.** `-2082844800` is 1904-01-01, the
-  HFS+ epoch — an unset access time. Through the mount it becomes 1970-01-01,
-  which is a *different claim*: "never accessed" rendered as a date.
-- **Ownership is replaced with the mounting user's.** uid 99 / gid 99 in the
-  image become 501 / 20 — whoever ran the mount. An examiner reading ownership
-  off the mount reads their own account, not the evidence.
-- **An entry present in the image is missing from the mount.** `HFS+ Private
-  Data` — a filesystem-internal directory whose name begins with four NUL-ish
-  bytes. Whether hiding it is right is arguable; doing so *silently* is not.
+```rust
+if t.seconds >= 0 { UNIX_EPOCH + .. } else { UNIX_EPOCH }   // fusefs::ts_to_systime
+```
 
-File **contents** are byte-exact (6 files compared), and `listxattr` never errors
-— so data integrity survives. It is metadata that does not.
+`-2082844800` is 1904-01-01, the HFS+ "never accessed" marker, and flattening it
+turned an absence into a date an examiner could put in a report. The excuse that
+the wire format cannot carry a negative time is false: `fuse_attr.atime` is an
+**`i64`** and fuser's `time_from_system_time` has an explicit before-epoch
+branch. Two existing unit tests had *asserted* the clamp with no rationale.
+Fixed; all four `atime` disagreements are gone.
 
-**None of this is FUSE-T behaving badly**; it is what an NFS attribute model can
-carry. It is also the strongest available argument for FSKit, and the reason the
-addendum above says "revisit when a wrong timestamp reaches a report" — three of
-them already reach the mount.
+The lesson is the session's recurring one: a measured discrepancy was attributed
+to the component I expected to be at fault, without checking our own conversion
+first.
+
+What remains, and what is genuinely below us:
+
+- **Ownership is replaced with the mounting user's.** uid/gid 99 become 501/20.
+  Our layer passes `uid: meta.uid` through correctly, so this is the NFS
+  transport. An examiner reading ownership off the mount reads their own account.
+- **An entry present in the image is missing.** `HFS+ Private Data`, a
+  filesystem-internal directory. Whether to hide it is arguable; doing so
+  *silently* is not.
+
+**Extended attributes are not carried at all, and NFS is not why.** The
+`ForensicFs` trait has no xattr method; `getxattr` serves synthetic values for
+deleted entries and returns `ENODATA` for real files. The readers have the data
+— `apfs-core` is Tier-1 validated on extended attributes — but it is not plumbed
+through `forensic-vfs` → `ForensicFs` → FUSE. On macOS that covers quarantine
+flags, Finder metadata and decmpfs. This is an architectural gap spanning repos,
+not a mount limitation.
+
+**Symlinks are wired** (`readlink` → `read_link`), though not yet covered by a
+differential test.
+
+File **contents** are byte-exact (6 files compared).
 
 The test **pins this exact shape** rather than committing red or asserting a
 fidelity we do not have. It stays green while the limitation is unchanged and

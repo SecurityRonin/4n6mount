@@ -458,10 +458,18 @@ impl ForensicFuseFs {
 /// Convert a `FsTimestamp` to `SystemTime`.
 fn ts_to_systime(t: &FsTimestamp) -> SystemTime {
     if t.seconds >= 0 {
-        UNIX_EPOCH + Duration::new(t.seconds as u64, t.nanoseconds)
-    } else {
-        UNIX_EPOCH
+        return UNIX_EPOCH + Duration::new(t.seconds.unsigned_abs(), t.nanoseconds);
     }
+    // Pre-epoch. HFS+ writes 1904-01-01 (-2082844800) for "never accessed", and
+    // rendering that as 1970-01-01 would turn an absence into a date an examiner
+    // could put in a report. SystemTime holds pre-epoch instants; build one.
+    //
+    // The nanoseconds run FORWARD from the whole second, so going backwards they
+    // reduce the distance: -1s + 0.5s is half a second before the epoch, not one
+    // and a half. Subtracting both would be off by a second.
+    let secs = Duration::from_secs(t.seconds.unsigned_abs());
+    let nanos = Duration::from_nanos(u64::from(t.nanoseconds));
+    UNIX_EPOCH - secs.saturating_sub(nanos)
 }
 
 /// Build a `FileAttr` from an `FsMetadata`.
@@ -2344,7 +2352,7 @@ mod tests {
     /// RED: a timestamp before 1970 must survive the conversion.
     ///
     /// HFS+ records "never accessed" as its own epoch, 1904-01-01
-    /// (-2082844800). Flattening that to UNIX_EPOCH does not lose precision --
+    /// (-2082844800). Flattening that to `UNIX_EPOCH` does not lose precision --
     /// it changes the CLAIM, from "no access recorded" to "accessed on
     /// 1 January 1970". An examiner reading a timeline off the mount would state
     /// a date the evidence does not contain.
@@ -2383,9 +2391,7 @@ mod tests {
             nanoseconds: 500_000_000,
         };
         let got = ts_to_systime(&t);
-        let before = UNIX_EPOCH
-            .duration_since(got)
-            .expect("before the epoch");
+        let before = UNIX_EPOCH.duration_since(got).expect("before the epoch");
         // -1s + 0.5s = -0.5s from the epoch.
         assert_eq!(
             before,
@@ -2495,24 +2501,37 @@ mod tests {
         assert_eq!(st, UNIX_EPOCH);
     }
 
+    /// A negative timestamp is carried, not clamped.
+    ///
+    /// This test previously asserted the opposite. It encoded the defect as a
+    /// requirement with no stated rationale, and the plausible excuse — that the
+    /// FUSE wire format cannot carry a pre-epoch time — is false: `fuse_attr.atime`
+    /// is an ****, and fuser's `time_from_system_time` has an explicit
+    /// before-epoch branch. Nothing below us ever required the clamp.
     #[test]
-    fn timestamp_negative_clamps_to_epoch() {
+    fn timestamp_negative_is_carried_not_clamped() {
         let ts = FsTimestamp {
             seconds: -1,
             nanoseconds: 0,
         };
         let st = ts_to_systime(&ts);
-        assert_eq!(st, UNIX_EPOCH);
+        assert_eq!(
+            UNIX_EPOCH.duration_since(st).expect("before the epoch"),
+            Duration::from_secs(1)
+        );
     }
-
+    /// A large negative timestamp is carried too — this is the HFS+ case.
     #[test]
-    fn timestamp_negative_large_clamps_to_epoch() {
+    fn timestamp_negative_large_is_carried() {
         let ts = FsTimestamp {
             seconds: -1_000_000,
-            nanoseconds: 999_999_999,
+            nanoseconds: 0,
         };
         let st = ts_to_systime(&ts);
-        assert_eq!(st, UNIX_EPOCH);
+        assert_eq!(
+            UNIX_EPOCH.duration_since(st).expect("before the epoch"),
+            Duration::from_secs(1_000_000)
+        );
     }
 
     #[test]

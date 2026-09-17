@@ -279,8 +279,6 @@ fn the_mount_presents_the_image_faithfully() {
     // that failure is the news.
     //
     // What each entry means for a report:
-    //   atime   pre-1970 times collapse to epoch 0. -2082844800 is 1904-01-01,
-    //           the HFS+ "never accessed" marker; the mount renders it as a date.
     //   uid/gid replaced by the MOUNTING USER's. An examiner reading ownership
     //           off the mount reads their own account, not the evidence.
     //   present one filesystem-internal entry is not surfaced by the mount.
@@ -288,10 +286,9 @@ fn the_mount_presents_the_image_faithfully() {
     for f in &findings {
         *by_field.entry(f.field).or_default() += 1;
     }
-    let known: std::collections::BTreeMap<&str, usize> =
-        [("atime", 4), ("gid", 3), ("present", 1), ("uid", 3)]
-            .into_iter()
-            .collect();
+    let known: std::collections::BTreeMap<&str, usize> = [("gid", 3), ("present", 1), ("uid", 3)]
+        .into_iter()
+        .collect();
     assert_eq!(
         by_field, known,
         "the NFS round trip lost a DIFFERENT set of fields than the baseline in \
@@ -300,12 +297,23 @@ fn the_mount_presents_the_image_faithfully() {
     );
 }
 
-/// Extended attributes must survive the mount.
+/// Listing extended attributes through the mount must not ERROR.
 ///
-/// `4n6mount` serves xattrs (`fusefs.rs::getxattr`/`listxattr`), and NFS has its
-/// own view of them. If they vanish in transit, an examiner who lists attributes
-/// through the mount concludes the file had none — a negative finding produced
-/// by the transport, not by the evidence.
+/// **This does not test that xattrs are carried, because they are not.** The
+/// `ForensicFs` trait has no xattr method at all; `fusefs.rs::getxattr` serves
+/// values only for synthetic deleted-file entries and answers `ENODATA` for a
+/// real file. The capability stops above the readers — `apfs-core` reads
+/// extended attributes and is Tier-1 validated on them — and is simply not
+/// plumbed through `forensic-vfs` → `ForensicFs` → FUSE.
+///
+/// An earlier version of this test reported "6 files, 0 carrying xattrs" and
+/// passed, which measured nothing: it would read identically if attributes were
+/// deliberately discarded. It now asserts only what it can — that the call path
+/// is well-behaved — and names the gap rather than implying coverage.
+///
+/// On macOS this matters: quarantine flags, Finder metadata and decmpfs all
+/// live in extended attributes, and an examiner who runs `xattr -l` on a mounted
+/// file currently gets "none" regardless of the evidence.
 #[test]
 fn extended_attributes_survive_the_mount() {
     let mut errors = Vec::new();
@@ -349,7 +357,10 @@ fn extended_attributes_survive_the_mount() {
         files > 0,
         "no files were examined: an xattr check over zero files asserts nothing"
     );
-    eprintln!("  {files} files, {with_attrs} carrying xattrs through the mount");
+    eprintln!(
+        "  {files} files; {with_attrs} reported attributes (xattrs are NOT yet \
+         plumbed through ForensicFs — see this test's note)"
+    );
     assert!(
         errors.is_empty(),
         "listing extended attributes failed through the mount:\n  {}",
