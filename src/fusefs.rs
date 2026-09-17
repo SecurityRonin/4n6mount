@@ -2340,6 +2340,72 @@ impl Filesystem for ForensicFuseFs {
 
 #[cfg(test)]
 mod tests {
+
+    /// RED: a timestamp before 1970 must survive the conversion.
+    ///
+    /// HFS+ records "never accessed" as its own epoch, 1904-01-01
+    /// (-2082844800). Flattening that to UNIX_EPOCH does not lose precision --
+    /// it changes the CLAIM, from "no access recorded" to "accessed on
+    /// 1 January 1970". An examiner reading a timeline off the mount would state
+    /// a date the evidence does not contain.
+    ///
+    /// `SystemTime` represents pre-epoch instants perfectly well; the old code
+    /// simply declined to build them.
+    #[test]
+    fn timestamps_before_1970_are_preserved_not_flattened() {
+        let hfs_epoch = FsTimestamp {
+            seconds: -2_082_844_800,
+            nanoseconds: 0,
+        };
+        let got = ts_to_systime(&hfs_epoch);
+        assert_ne!(
+            got, UNIX_EPOCH,
+            "a 1904 timestamp must not be rendered as 1970"
+        );
+        let before = UNIX_EPOCH
+            .duration_since(got)
+            .expect("the instant must be BEFORE the epoch");
+        assert_eq!(
+            before.as_secs(),
+            2_082_844_800,
+            "and must be exactly the HFS+ epoch"
+        );
+    }
+
+    /// RED: sub-second precision survives on a pre-epoch timestamp too.
+    ///
+    /// Going backwards from the epoch, the nanoseconds subtract rather than add,
+    /// which is the easy thing to get wrong by one second.
+    #[test]
+    fn pre_epoch_nanoseconds_are_not_lost_or_inverted() {
+        let t = FsTimestamp {
+            seconds: -1,
+            nanoseconds: 500_000_000,
+        };
+        let got = ts_to_systime(&t);
+        let before = UNIX_EPOCH
+            .duration_since(got)
+            .expect("before the epoch");
+        // -1s + 0.5s = -0.5s from the epoch.
+        assert_eq!(
+            before,
+            Duration::new(0, 500_000_000),
+            "half a second before the epoch, not one and a half"
+        );
+    }
+
+    /// RED: ordinary post-epoch timestamps are unchanged by the fix.
+    #[test]
+    fn post_epoch_timestamps_are_unaffected() {
+        let t = FsTimestamp {
+            seconds: 1_700_000_000,
+            nanoseconds: 123_456_789,
+        };
+        assert_eq!(
+            ts_to_systime(&t),
+            UNIX_EPOCH + Duration::new(1_700_000_000, 123_456_789)
+        );
+    }
     use super::*;
     use crate::{FsDeletedInode, FsDirEntry, FsError, FsRecoveryResult, FsResult, FsTimelineEvent};
     use fuser::FileType;
