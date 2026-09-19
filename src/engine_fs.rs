@@ -22,8 +22,8 @@ use std::io;
 use std::path::{Path, PathBuf};
 
 use forensic_vfs::{
-    Allocation, DynFs, FileId, Layer, Locator, MacbTimes, NodeKind, StreamId, TimeStamp,
-    TimeZonePolicy, VfsError,
+    Allocation, DynFs, FileId, Layer, Locator, MacbTimes, NodeKind, StreamId, StreamKind,
+    TimeStamp, TimeZonePolicy, VfsError,
 };
 use forensic_vfs_engine::Vfs;
 
@@ -199,6 +199,48 @@ impl ForensicFs for EngineFs {
         let id = self.file_id(ino)?;
         let size = self.fs.meta(id).map_err(vfs_err)?.size;
         self.read_file_range(ino, 0, size)
+    }
+
+    fn xattrs(&mut self, ino: u64) -> FsResult<Vec<(Vec<u8>, Vec<u8>)>> {
+        let id = self.file_id(ino)?;
+        // forensic-vfs models attributes as streams. Select on the stream KIND
+        // rather than on the id: an NTFS alternate data stream is also a named
+        // stream and is NOT an extended attribute, and flattening the two would
+        // present an ADS to an examiner as though it were an xattr.
+        let streams = self.fs.data_streams(id).map_err(vfs_err)?;
+        let mut out = Vec::new();
+        for st in streams {
+            if st.kind != StreamKind::Xattr {
+                continue;
+            }
+            // An attribute with no name cannot be addressed by name through
+            // FUSE; skipping it silently would hide evidence, so it is reported
+            // under its stream id instead.
+            let name = st.name.clone().unwrap_or_else(|| match st.id {
+                StreamId::Xattr(n) => format!("xattr.{n}").into_bytes(),
+                _ => b"xattr.unnamed".to_vec(),
+            });
+
+            let size = usize::try_from(st.size).unwrap_or(usize::MAX);
+            let mut buf = vec![0u8; size];
+            let mut filled = 0usize;
+            while filled < size {
+                let n = self
+                    .fs
+                    .read_at(id, st.id, filled as u64, &mut buf[filled..])
+                    .map_err(vfs_err)?;
+                if n == 0 {
+                    // Short read: the attribute is truncated in the image.
+                    // Report what was recovered rather than failing the whole
+                    // listing, but do not pretend it is the full value.
+                    buf.truncate(filled);
+                    break;
+                }
+                filled += n;
+            }
+            out.push((name, buf));
+        }
+        Ok(out)
     }
 
     fn read_file_range(&mut self, ino: u64, offset: u64, len: u64) -> FsResult<Vec<u8>> {

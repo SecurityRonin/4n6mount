@@ -242,7 +242,7 @@ fn route_memory_mount(_image: &str, _mountpoint: &str, _symbols: Option<&str>, _
 /// Reads the real paths here and hands them to the pure prober, so the decision
 /// logic stays testable without installing anything (Humble Object).
 fn report_fuse_backends() {
-    use forensic_mount::fuse_backend::probe;
+    use forensic_mount::fuse_backend::{probe, ProbeEnv};
 
     let dev_present = std::fs::read_dir("/dev").is_ok_and(|d| {
         d.flatten()
@@ -289,15 +289,25 @@ fn report_fuse_backends() {
     let linked_fuse_t = env!("FUSE_LINKED_LIB") == "fuse-t";
 
     println!("FUSE mechanisms on this machine:\n");
-    for b in probe(
-        env!("FUSE_LINKED_LIB"),
-        dev_present,
-        staged.as_deref(),
-        installed.as_deref(),
-        &modules,
-        fuse_t,
+    // Read from the RUNNING system, not from a build-time constant: the same
+    // binary can be carried to a different macOS.
+    let os_major = std::process::Command::new("sw_vers")
+        .arg("-productVersion")
+        .output()
+        .ok()
+        .and_then(|o| String::from_utf8(o.stdout).ok())
+        .and_then(|v| v.trim().split('.').next()?.parse::<u32>().ok());
+
+    for b in probe(&ProbeEnv {
+        linked_lib: env!("FUSE_LINKED_LIB"),
+        os_major,
+        dev_macfuse_present: dev_present,
+        staged_kext: staged.as_deref(),
+        installed_kext: installed.as_deref(),
+        fskit_modules: &modules,
+        fuse_t_lib: fuse_t,
         linked_fuse_t,
-    ) {
+    }) {
         println!(
             "  {:<12} {:<11} {}",
             format!("{:?}", b.backend),

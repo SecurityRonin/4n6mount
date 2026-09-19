@@ -17,7 +17,9 @@ use std::path::{Path, PathBuf};
 use forensic_mount::ForensicFs;
 
 fn images() -> Vec<PathBuf> {
-    let d = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests").join("data");
+    let d = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests")
+        .join("data");
     ["apfs.img", "hfsplus.img", "exfat.img"]
         .iter()
         .map(|n| d.join(n))
@@ -45,7 +47,9 @@ fn xattrs_reach_the_forensic_fs_layer() {
         let mut found = 0usize;
         let mut stack = vec![f.root_ino()];
         while let Some(ino) = stack.pop() {
-            let Ok(entries) = f.read_dir(ino) else { continue };
+            let Ok(entries) = f.read_dir(ino) else {
+                continue;
+            };
             for e in entries {
                 let n = e.name_str();
                 if n == "." || n == ".." {
@@ -63,7 +67,10 @@ fn xattrs_reach_the_forensic_fs_layer() {
                 }
             }
         }
-        per_image.push(format!("{}: {found}", img.file_name().unwrap().to_string_lossy()));
+        per_image.push(format!(
+            "{}: {found}",
+            img.file_name().unwrap().to_string_lossy()
+        ));
         total += found;
     }
 

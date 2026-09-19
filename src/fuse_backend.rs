@@ -89,7 +89,37 @@ pub struct BackendStatus {
     pub detail: String,
 }
 
+/// Everything [`probe`] observes about the machine.
+///
+/// A struct rather than eight positional arguments: four of them are
+/// `Option<&str>` or `bool`, so a transposed pair would compile cleanly and
+/// quietly invert a diagnosis — `staged_kext` and `installed_kext` in
+/// particular, whose whole purpose is to be COMPARED against each other.
+#[derive(Debug, Clone, Copy)]
+pub struct ProbeEnv<'a> {
+    /// What `build.rs` recorded this binary links: `"fuse-t"` or `"macfuse"`.
+    pub linked_lib: &'a str,
+    /// macOS major version, e.g. `27`; `None` when unknown.
+    pub os_major: Option<u32>,
+    /// Whether any `/dev/macfuse*` node exists.
+    pub dev_macfuse_present: bool,
+    /// Version of the STAGED kext, which is the one that loads after a reboot.
+    pub staged_kext: Option<&'a str>,
+    /// Version of the INSTALLED kext on disk.
+    pub installed_kext: Option<&'a str>,
+    /// `pluginkit` lines for registered `FSKit` modules.
+    pub fskit_modules: &'a [&'a str],
+    /// Path to FUSE-T's dylib, if present.
+    pub fuse_t_lib: Option<&'a Path>,
+    /// Whether this binary links FUSE-T.
+    pub linked_fuse_t: bool,
+}
+
 /// Probe the machine for usable FUSE mechanisms.
+///
+/// `os_major` is the macOS major version (e.g. `27`). `None` on a non-macOS
+/// host, or when it could not be read — an unknown version asserts no
+/// incompatibility, because not knowing is not evidence.
 ///
 /// `available` means **this binary can mount with it right now** — not that the
 /// pieces are installed somewhere. The distinction is the whole point: a
@@ -106,22 +136,48 @@ pub struct BackendStatus {
 /// Pure with respect to its inputs, so the decision logic is testable without
 /// installing anything.
 #[must_use]
-pub fn probe(
-    linked_lib: &str,
-    dev_macfuse_present: bool,
-    staged_kext: Option<&str>,
-    installed_kext: Option<&str>,
-    fskit_modules: &[&str],
-    fuse_t_lib: Option<&Path>,
-    linked_fuse_t: bool,
-) -> Vec<BackendStatus> {
+pub fn probe(env: &ProbeEnv<'_>) -> Vec<BackendStatus> {
+    let &ProbeEnv {
+        linked_lib,
+        os_major,
+        dev_macfuse_present,
+        staged_kext,
+        installed_kext,
+        fskit_modules,
+        fuse_t_lib,
+        linked_fuse_t,
+    } = env;
     // The mechanism is fixed at LINK time, so a binary linking FUSE-T cannot
     // use the kernel extension however healthy it looks. Reporting the device
     // node alone as capability is the same inventory-for-capability error the
     // FSKit and FUSE-T arms already avoid.
     let links_macfuse = linked_lib != "fuse-t";
+
+    // MEASURED, not assumed: on macOS 26+ macFUSE's libfuse2 compatibility layer
+    // fails for its clients even with the kext loaded, approved, and every
+    // /dev/macfuse node present. Three independent programs were tried on macOS
+    // 27.0 (build 26A428) and all failed:
+    //
+    //   4n6mount (fuser 0.16 and 0.18) -> EPERM
+    //   minfuse   (40 lines, none of our code) -> Unspecified Error
+    //   ewfmount  (libewf, unrelated project) -> macFUSE option-parse error
+    //
+    // A devfs mount from the same process succeeded throughout, so generic
+    // mount permission is not the cause. Reporting Kernel as `available` here
+    // promises a mount that cannot happen -- the inventory-for-capability error
+    // the FSKit and FUSE-T arms already refuse to make.
+    let os_breaks_macfuse = os_major.is_some_and(|v| v >= 26);
+
     let kernel_detail = if !links_macfuse {
         "this binary links FUSE-T, so the kernel extension cannot be used by it".to_string()
+    } else if dev_macfuse_present && os_breaks_macfuse {
+        format!(
+            "/dev/macfuse is present and the kext is loaded, but macFUSE's libfuse2 \
+             layer does not mount on macOS {} -- measured with three independent \
+             programs, including two not from this project. Build against FUSE-T \
+             instead (see docs/decisions/0011-macos-mounts-via-fuse-t-linkage.md)",
+            os_major.unwrap_or(0)
+        )
     } else if dev_macfuse_present {
         "/dev/macfuse is present; the kernel extension is loaded".to_string()
     } else {
@@ -160,7 +216,7 @@ pub fn probe(
     vec![
         BackendStatus {
             backend: FuseBackend::Kernel,
-            available: links_macfuse && dev_macfuse_present,
+            available: links_macfuse && dev_macfuse_present && !os_breaks_macfuse,
             detail: kernel_detail,
         },
         BackendStatus {
@@ -284,15 +340,16 @@ mod tests {
     /// permission error that no amount of approving the OLD version fixes.
     #[test]
     fn a_stale_staged_kext_is_reported_as_the_reason() {
-        let s = probe(
-            "macfuse",
-            false,
-            Some("5.3.3"),
-            Some("5.4.0"),
-            &[],
-            None,
-            false,
-        );
+        let s = probe(&ProbeEnv {
+            linked_lib: "macfuse",
+            os_major: None,
+            dev_macfuse_present: false,
+            staged_kext: Some("5.3.3"),
+            installed_kext: Some("5.4.0"),
+            fskit_modules: &[],
+            fuse_t_lib: None,
+            linked_fuse_t: false,
+        });
         let kernel = s
             .iter()
             .find(|b| b.backend == FuseBackend::Kernel)
@@ -308,15 +365,16 @@ mod tests {
     /// RED: with the device node present the kernel backend is usable.
     #[test]
     fn a_present_device_node_means_the_kernel_backend_works() {
-        let s = probe(
-            "macfuse",
-            true,
-            Some("5.4.0"),
-            Some("5.4.0"),
-            &[],
-            None,
-            false,
-        );
+        let s = probe(&ProbeEnv {
+            linked_lib: "macfuse",
+            os_major: None,
+            dev_macfuse_present: true,
+            staged_kext: Some("5.4.0"),
+            installed_kext: Some("5.4.0"),
+            fskit_modules: &[],
+            fuse_t_lib: None,
+            linked_fuse_t: false,
+        });
         assert!(s
             .iter()
             .any(|b| b.backend == FuseBackend::Kernel && b.available));
@@ -332,15 +390,16 @@ mod tests {
     /// three usable backends and could mount with none of them.
     #[test]
     fn registered_fskit_modules_are_detected_individually() {
-        let s = probe(
-            "macfuse",
-            false,
-            None,
-            None,
-            &["io.macfuse.app.fsmodule.macfuse"],
-            None,
-            false,
-        );
+        let s = probe(&ProbeEnv {
+            linked_lib: "macfuse",
+            os_major: None,
+            dev_macfuse_present: false,
+            staged_kext: None,
+            installed_kext: None,
+            fskit_modules: &["io.macfuse.app.fsmodule.macfuse"],
+            fuse_t_lib: None,
+            linked_fuse_t: false,
+        });
         let scheme = s
             .iter()
             .find(|b| b.backend == FuseBackend::FsKit)
@@ -376,7 +435,16 @@ mod tests {
     fn fuse_t_is_available_only_when_linked_not_merely_installed() {
         let installed = Some(Path::new("/usr/local/lib/libfuse-t.dylib"));
 
-        let linked = probe("macfuse", false, None, None, &[], installed, true);
+        let linked = probe(&ProbeEnv {
+            linked_lib: "macfuse",
+            os_major: None,
+            dev_macfuse_present: false,
+            staged_kext: None,
+            installed_kext: None,
+            fskit_modules: &[],
+            fuse_t_lib: installed,
+            linked_fuse_t: true,
+        });
         assert!(
             linked
                 .iter()
@@ -384,7 +452,16 @@ mod tests {
             "linked against FUSE-T means usable"
         );
 
-        let merely_installed = probe("macfuse", false, None, None, &[], installed, false);
+        let merely_installed = probe(&ProbeEnv {
+            linked_lib: "macfuse",
+            os_major: None,
+            dev_macfuse_present: false,
+            staged_kext: None,
+            installed_kext: None,
+            fskit_modules: &[],
+            fuse_t_lib: installed,
+            linked_fuse_t: false,
+        });
         let s = merely_installed
             .iter()
             .find(|b| b.backend == FuseBackend::FuseT)
@@ -401,7 +478,16 @@ mod tests {
     /// unavailable ones cannot explain why a mount failed.
     #[test]
     fn the_probe_reports_every_mechanism() {
-        let s = probe("macfuse", false, None, None, &[], None, false);
+        let s = probe(&ProbeEnv {
+            linked_lib: "macfuse",
+            os_major: None,
+            dev_macfuse_present: false,
+            staged_kext: None,
+            installed_kext: None,
+            fskit_modules: &[],
+            fuse_t_lib: None,
+            linked_fuse_t: false,
+        });
         for b in [
             FuseBackend::Kernel,
             FuseBackend::FsKit,
@@ -434,7 +520,16 @@ mod tests {
             "   io.macfuse.app.fsmodule.macfuse(2.0)\t63CF120B-A09D-464B-81AC-9FD974C5F66E\t2026-09-14 09:00:33 +0000\t/Library/Filesystems/macfuse.fs/Contents/Resources/macfuse.app/Contents/Extensions/io.macfuse.app.fsmodule.macfuse.appex",
             "   io.macfuse.app.fsmodule.macfuse-local(2.0)\tD20E163C-267A-4712-9619-974739FEAA51\t2026-09-14 09:00:33 +0000\t/Library/Filesystems/macfuse.fs/Contents/Resources/macfuse.app/Contents/Extensions/io.macfuse.app.fsmodule.macfuse-local.appex",
         ];
-        let s = probe("macfuse", false, None, None, &lines, None, false);
+        let s = probe(&ProbeEnv {
+            linked_lib: "macfuse",
+            os_major: None,
+            dev_macfuse_present: false,
+            staged_kext: None,
+            installed_kext: None,
+            fskit_modules: &lines,
+            fuse_t_lib: None,
+            linked_fuse_t: false,
+        });
         let scheme = s
             .iter()
             .find(|b| b.backend == FuseBackend::FsKit)
@@ -461,7 +556,16 @@ mod tests {
     fn only_local_registered_does_not_claim_the_scheme_module() {
         let lines =
             ["   io.macfuse.app.fsmodule.macfuse-local(2.0)\tD20E163C\t2026-09-14\t/x.appex"];
-        let s = probe("macfuse", false, None, None, &lines, None, false);
+        let s = probe(&ProbeEnv {
+            linked_lib: "macfuse",
+            os_major: None,
+            dev_macfuse_present: false,
+            staged_kext: None,
+            installed_kext: None,
+            fskit_modules: &lines,
+            fuse_t_lib: None,
+            linked_fuse_t: false,
+        });
         let scheme = s
             .iter()
             .find(|b| b.backend == FuseBackend::FsKit)
@@ -481,5 +585,85 @@ mod tests {
             "the local personality IS registered: {:?}",
             local.detail
         );
+    }
+
+    /// A loaded kext on macOS 26+ must NOT be reported as usable.
+    ///
+    /// This is the regression that prompted the OS gate: once the kext was
+    /// approved and `/dev/macfuse0..63` appeared, the probe began announcing
+    /// `Kernel available` on a machine where every mount still returns EPERM.
+    /// `mount_smoke` caught it, which is what that test is for.
+    #[test]
+    fn a_loaded_kext_on_macos_26_plus_is_not_reported_usable() {
+        for v in [26u32, 27, 30] {
+            let s = probe(&ProbeEnv {
+                linked_lib: "macfuse",
+                os_major: Some(v),
+                dev_macfuse_present: true,
+                staged_kext: None,
+                installed_kext: None,
+                fskit_modules: &[],
+                fuse_t_lib: None,
+                linked_fuse_t: false,
+            });
+            let k = s.iter().find(|b| b.backend == FuseBackend::Kernel).unwrap();
+            assert!(
+                !k.available,
+                "macOS {v}: the kext is loaded but macFUSE's libfuse2 layer does \
+                 not mount; `available` promises a mount that cannot happen"
+            );
+            assert!(
+                k.detail.contains("FUSE-T"),
+                "the detail must name the route that DOES work, not just refuse: {}",
+                k.detail
+            );
+        }
+    }
+
+    /// On an older macOS the same inventory IS reported usable.
+    ///
+    /// Without this the gate would be indistinguishable from simply deleting
+    /// kernel support, and an examiner on macOS 14 would be told to rebuild for
+    /// no reason.
+    #[test]
+    fn a_loaded_kext_on_older_macos_is_still_usable() {
+        for v in [13u32, 14, 15] {
+            let s = probe(&ProbeEnv {
+                linked_lib: "macfuse",
+                os_major: Some(v),
+                dev_macfuse_present: true,
+                staged_kext: None,
+                installed_kext: None,
+                fskit_modules: &[],
+                fuse_t_lib: None,
+                linked_fuse_t: false,
+            });
+            let k = s.iter().find(|b| b.backend == FuseBackend::Kernel).unwrap();
+            assert!(
+                k.available,
+                "macOS {v}: macFUSE works here and must be offered"
+            );
+        }
+    }
+
+    /// An unknown OS version asserts no incompatibility.
+    ///
+    /// Not knowing the version is not evidence that the mechanism is broken, so
+    /// the probe falls back to the inventory it can see rather than inventing a
+    /// verdict.
+    #[test]
+    fn an_unknown_os_version_asserts_nothing() {
+        let s = probe(&ProbeEnv {
+            linked_lib: "macfuse",
+            os_major: None,
+            dev_macfuse_present: true,
+            staged_kext: None,
+            installed_kext: None,
+            fskit_modules: &[],
+            fuse_t_lib: None,
+            linked_fuse_t: false,
+        });
+        let k = s.iter().find(|b| b.backend == FuseBackend::Kernel).unwrap();
+        assert!(k.available, "unknown version must not fabricate a failure");
     }
 }

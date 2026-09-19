@@ -90,7 +90,6 @@ pub trait ForensicFs {
         Ok(Vec::new())
     }
 
-
     // --- Forensic ops (optional) ---
 
     /// List deleted inodes.

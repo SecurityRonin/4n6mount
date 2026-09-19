@@ -184,15 +184,24 @@ fn live_backends() -> Vec<forensic_mount::fuse_backend::BackendStatus> {
     .map(Path::new)
     .find(|p| p.exists());
 
-    probe(
-        option_env!("FUSE_LINKED_LIB").unwrap_or("macfuse"),
-        dev_present,
-        staged.as_deref(),
-        installed.as_deref(),
-        &modules,
-        fuse_t,
-        option_env!("FUSE_LINKED_LIB").unwrap_or("macfuse") == "fuse-t",
-    )
+    // Read the RUNNING system, as the shipping binary does.
+    let os_major = Command::new("/usr/bin/sw_vers")
+        .arg("-productVersion")
+        .output()
+        .ok()
+        .and_then(|o| String::from_utf8(o.stdout).ok())
+        .and_then(|v| v.trim().split('.').next()?.parse::<u32>().ok());
+
+    probe(&forensic_mount::fuse_backend::ProbeEnv {
+        linked_lib: option_env!("FUSE_LINKED_LIB").unwrap_or("macfuse"),
+        os_major,
+        dev_macfuse_present: dev_present,
+        staged_kext: staged.as_deref(),
+        installed_kext: installed.as_deref(),
+        fskit_modules: &modules,
+        fuse_t_lib: fuse_t,
+        linked_fuse_t: option_env!("FUSE_LINKED_LIB").unwrap_or("macfuse") == "fuse-t",
+    })
 }
 
 fn cli_name(b: forensic_mount::fuse_backend::FuseBackend) -> &'static str {
@@ -206,6 +215,25 @@ fn cli_name(b: forensic_mount::fuse_backend::FuseBackend) -> &'static str {
         // "let libfuse decide".
         _ => "auto",
     }
+}
+
+/// Write to the PROCESS's real stderr, bypassing libtest's capture.
+///
+/// `eprintln!` is not enough: the harness captures per-test output and prints
+/// it only for FAILING tests, so Case C's reasons vanish from a normal run and
+/// the skip reads as `1 passed`. That is the exact failure this test's Case C
+/// exists to prevent, and it was happening here.
+///
+/// Opening `/dev/stderr` reaches the real descriptor rather than the harness's
+/// buffer. No `unsafe`. Falls back to `eprintln!` if the open fails.
+fn announce(msg: &str) {
+    use std::io::Write as _;
+    if let Ok(mut f) = std::fs::OpenOptions::new().write(true).open("/dev/stderr") {
+        if write!(f, "\n{msg}\n").is_ok() {
+            return;
+        }
+    }
+    eprintln!("{msg}");
 }
 
 /// Every backend reported AVAILABLE must actually mount, and what it shows must
@@ -222,10 +250,12 @@ fn every_available_backend_really_mounts() {
         // CASE C — skip, but loudly, naming every reason. A silent skip is
         // indistinguishable from a pass, and that is how a backend ships
         // unexercised for years.
-        eprintln!("SKIPPED: no FUSE backend is available on this machine:");
+        let mut msg = String::from("SKIPPED: no FUSE backend is available on this machine:\n");
         for s in &statuses {
-            eprintln!("  {:?}: {}", s.backend, s.detail);
+            use std::fmt::Write as _;
+            let _ = writeln!(msg, "  {:?}: {}", s.backend, s.detail);
         }
+        announce(&msg);
         return;
     }
 
