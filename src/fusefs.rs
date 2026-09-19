@@ -840,6 +840,42 @@ fn entry_mark(entry: &DeletedEntry) -> crate::marking::Mark {
 /// 0008 v2): the deleted/orphan status plus the recovered MACB times. Live
 /// files carry none of these — the xattr channel is the mount's red-X. The names
 /// and values are owned by [`crate::marking`], the single source of truth.
+/// A real entry's attribute NAMES, NUL-terminated and concatenated per the FUSE
+/// `listxattr` contract.
+///
+/// Split out of the callback because a `fuser::Request` cannot be constructed
+/// in a test, so logic left inside the callback is logic that cannot be
+/// exercised. Everything that decides anything lives here.
+fn real_xattr_names(fs: &mut dyn crate::ForensicFs, fs_ino: u64) -> Vec<u8> {
+    let mut buf = Vec::new();
+    // A reader that fails is not a file with no attributes. The distinction
+    // cannot be expressed through listxattr -- the contract has no "unknown" --
+    // so the error is swallowed HERE and the mount's fidelity record carries the
+    // caveat instead. See metadata/mount-fidelity.json.
+    if let Ok(attrs) = fs.xattrs(fs_ino) {
+        for (name, _) in attrs {
+            buf.extend_from_slice(&name);
+            buf.push(0);
+        }
+    }
+    buf
+}
+
+/// One real entry's attribute value, selected by raw NAME BYTES.
+///
+/// Matched on bytes rather than on a `to_str()` conversion: an attribute name
+/// is not guaranteed UTF-8, and a name that failed to convert would read as
+/// "no such attribute" -- an absence manufactured by the lookup rather than
+/// found in the evidence.
+fn real_xattr_value(fs: &mut dyn crate::ForensicFs, fs_ino: u64, want: &[u8]) -> Option<Vec<u8>> {
+    fs.xattrs(fs_ino).ok().and_then(|attrs| {
+        attrs
+            .into_iter()
+            .find(|(n, _)| n.as_slice() == want)
+            .map(|(_, v)| v)
+    })
+}
+
 fn deleted_xattr_names() -> &'static [&'static str] {
     &crate::marking::UNIX_XATTR_NAMES
 }
@@ -1300,17 +1336,25 @@ impl Filesystem for ForensicFuseFs {
     /// none, so they reply `ENODATA`. Follows the FUSE size-probe protocol:
     /// `size == 0` returns the value length; otherwise the bytes (or `ERANGE`).
     fn getxattr(&mut self, _req: &Request, ino: u64, name: &OsStr, size: u32, reply: ReplyXattr) {
-        let value = if let InodeNamespace::Deleted(fs_ino) = decode_fuse_ino(ino) {
-            self.ensure_deleted_cache();
-            let cache = self.deleted_cache.borrow();
-            let attr_name = name.to_str();
-            cache.as_ref().and_then(|entries| {
-                let n = attr_name?;
-                let e = entries.iter().find(|e| e.fs_ino == fs_ino)?;
-                deleted_xattr_value(e, n)
-            })
-        } else {
-            None
+        let value = match decode_fuse_ino(ino) {
+            InodeNamespace::Deleted(fs_ino) => {
+                self.ensure_deleted_cache();
+                let cache = self.deleted_cache.borrow();
+                let attr_name = name.to_str();
+                cache.as_ref().and_then(|entries| {
+                    let n = attr_name?;
+                    let e = entries.iter().find(|e| e.fs_ino == fs_ino)?;
+                    deleted_xattr_value(e, n)
+                })
+            }
+            // Matched on the NAME's bytes, not on a lossy string conversion: an
+            // attribute name is not guaranteed UTF-8, and a name that failed to
+            // convert would silently read as "no such attribute" -- an absence
+            // manufactured by the lookup rather than found in the evidence.
+            InodeNamespace::Ro(fs_ino) => {
+                real_xattr_value(&mut **self.fs.borrow_mut(), fs_ino, name.as_encoded_bytes())
+            }
+            _ => None,
         };
         match value {
             Some(v) => {
@@ -1331,18 +1375,28 @@ impl Filesystem for ForensicFuseFs {
     /// nothing. Names are NUL-separated per the FUSE `listxattr` contract.
     fn listxattr(&mut self, _req: &Request, ino: u64, size: u32, reply: ReplyXattr) {
         let mut buf: Vec<u8> = Vec::new();
-        if let InodeNamespace::Deleted(fs_ino) = decode_fuse_ino(ino) {
-            self.ensure_deleted_cache();
-            let cache = self.deleted_cache.borrow();
-            let present = cache
-                .as_ref()
-                .is_some_and(|entries| entries.iter().any(|e| e.fs_ino == fs_ino));
-            if present {
-                for n in deleted_xattr_names() {
-                    buf.extend_from_slice(n.as_bytes());
-                    buf.push(0);
+        match decode_fuse_ino(ino) {
+            InodeNamespace::Deleted(fs_ino) => {
+                self.ensure_deleted_cache();
+                let cache = self.deleted_cache.borrow();
+                let present = cache
+                    .as_ref()
+                    .is_some_and(|entries| entries.iter().any(|e| e.fs_ino == fs_ino));
+                if present {
+                    for n in deleted_xattr_names() {
+                        buf.extend_from_slice(n.as_bytes());
+                        buf.push(0);
+                    }
                 }
             }
+            // A REAL entry's attributes come from the reader. Before this the
+            // arm did not exist and every real file listed nothing -- so even on
+            // Linux, where FUSE carries attributes natively, the mount dropped
+            // them for a reason of ours rather than the transport's.
+            InodeNamespace::Ro(fs_ino) => {
+                buf = real_xattr_names(&mut **self.fs.borrow_mut(), fs_ino);
+            }
+            _ => {}
         }
         if size == 0 {
             reply.size(buf.len() as u32);
@@ -2940,6 +2994,25 @@ mod tests {
             2
         }
 
+        /// Inode 12 carries three attributes; everything else carries none.
+        /// The third name is deliberately NOT valid UTF-8.
+        fn xattrs(&mut self, ino: u64) -> FsResult<Vec<(Vec<u8>, Vec<u8>)>> {
+            if ino != 12 {
+                return Ok(Vec::new());
+            }
+            Ok(vec![
+                (b"user.comment".to_vec(), b"a second attribute".to_vec()),
+                (
+                    b"com.apple.quarantine".to_vec(),
+                    b"0081;deadbeef;Safari".to_vec(),
+                ),
+                (
+                    vec![b'u', b's', b'e', b'r', b'.', 0xFF, 0xFE],
+                    b"non-utf8-name".to_vec(),
+                ),
+            ])
+        }
+
         fn read_dir(&mut self, ino: u64) -> FsResult<Vec<FsDirEntry>> {
             match ino {
                 2 => Ok(vec![
@@ -3508,6 +3581,74 @@ mod tests {
     // ADR 0008 v2 (c): the deleted status + recovered MACB times ride an
     // out-of-band xattr channel (user.4n6.*), never a name/mode decoration.
     // -----------------------------------------------------------------------
+
+    /// A real entry's attributes must reach the FUSE layer.
+    ///
+    /// Before this wiring `getxattr`/`listxattr` handled only recovered-deleted
+    /// entries and returned nothing for every real file -- so even on Linux,
+    /// where FUSE carries attributes natively, the mount dropped them for a
+    /// reason of OURS rather than the transport's. `ForensicFs::xattrs()`
+    /// existed the whole time and was never called.
+    #[test]
+    fn a_real_entrys_attribute_names_reach_the_fuse_layer() {
+        let mut fs = MockForensicFs;
+        let buf = super::real_xattr_names(&mut fs, 12);
+
+        // NUL-separated per the listxattr contract.
+        let names: Vec<&[u8]> = buf.split(|b| *b == 0).filter(|n| !n.is_empty()).collect();
+        assert_eq!(names.len(), 3, "the mock carries three attributes");
+        assert!(names.contains(&&b"user.comment"[..]));
+        assert!(
+            names.contains(&&b"com.apple.quarantine"[..]),
+            "a quarantine flag is exactly the attribute a macOS examination needs"
+        );
+    }
+
+    /// Values come back byte-exact, selected by raw name bytes.
+    #[test]
+    fn a_real_entrys_attribute_value_is_returned_byte_exact() {
+        let mut fs = MockForensicFs;
+        assert_eq!(
+            super::real_xattr_value(&mut fs, 12, b"com.apple.quarantine"),
+            Some(b"0081;deadbeef;Safari".to_vec())
+        );
+        assert_eq!(
+            super::real_xattr_value(&mut fs, 12, b"user.comment"),
+            Some(b"a second attribute".to_vec())
+        );
+    }
+
+    /// A non-UTF-8 attribute name must still resolve.
+    ///
+    /// The lookup matches raw bytes rather than converting through `to_str()`.
+    /// A conversion would fail here and report "no such attribute" -- an absence
+    /// manufactured by the lookup, indistinguishable from one found in the
+    /// evidence, which is the whole class of bug this session has been closing.
+    #[test]
+    fn a_non_utf8_attribute_name_still_resolves() {
+        let mut fs = MockForensicFs;
+        // Built at runtime so the control is a real check rather than a
+        // constant clippy can fold away.
+        let mut weird: Vec<u8> = b"user.".to_vec();
+        weird.extend_from_slice(&[0xFF, 0xFE]);
+        assert!(
+            String::from_utf8(weird.clone()).is_err(),
+            "the control: this name is genuinely not UTF-8, so the test is not vacuous"
+        );
+        assert_eq!(
+            super::real_xattr_value(&mut fs, 12, &weird),
+            Some(b"non-utf8-name".to_vec()),
+            "matching on bytes must find what a string conversion would lose"
+        );
+    }
+
+    /// An entry with no attributes lists nothing, and that is not an error.
+    #[test]
+    fn an_entry_without_attributes_lists_nothing() {
+        let mut fs = MockForensicFs;
+        assert!(super::real_xattr_names(&mut fs, 99).is_empty());
+        assert_eq!(super::real_xattr_value(&mut fs, 99, b"user.comment"), None);
+    }
 
     #[test]
     fn deleted_xattr_names_are_the_marking_schema() {
