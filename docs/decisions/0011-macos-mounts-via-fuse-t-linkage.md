@@ -352,6 +352,33 @@ produces **0** xattr callbacks (32 getattr). The FSKit module is a separate
 product path at version 0.1.3 while the dylib is 1.2.7 — an early, parallel
 effort, not a switch on the libfuse API.
 
+**Then the extension was actually ENABLED, and it still changed nothing.** The
+inference above is from symbols, and this ADR already records one case of
+reading capability out of an artifact and being wrong, so it was tested rather
+than trusted. `fuse-t.app` (bundle id `org.fuset.fskit-srv`) is the FSKit host
+app; its window is a status monitor that deep-links to System Settings. The
+toggle would not take from the UI, so it was set with the documented CLI:
+
+```text
+$ pluginkit -e use -i org.fuset.fskit-srv.module
+$ pluginkit -m -p com.apple.fskit.fsmodule -A | grep fuset
++····org.fuset.fskit-srv.module(0.1.3)          <- enabled, was blank
+```
+
+Re-running `examples/xattrfs.rs` with the extension enabled:
+
+```text
+getattr   29      <- control: the filesystem is still driven
+listxattr  0
+getxattr   0      <- unchanged
+```
+
+Nothing to rule out on the extension's own health either: signature valid,
+notarized Developer ID, `com.apple.developer.fskit.fsmodule` entitlement
+present, provisioning profile good to 2044, `LSMinimumSystemVersion` 26.0 on a
+27.0 host. It is enabled and healthy and our mounts do not route through it,
+because `fuser` links `libfuse-t.dylib` and that library has no path to it.
+
 ### 3. What does building our own cost? The packaging objection STANDS
 
 Verified, not inherited:
