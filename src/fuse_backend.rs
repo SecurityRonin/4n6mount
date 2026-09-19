@@ -667,3 +667,134 @@ mod tests {
         assert!(k.available, "unknown version must not fabricate a failure");
     }
 }
+
+// ---------------------------------------------------------------------------
+// Transport fidelity
+// ---------------------------------------------------------------------------
+
+/// A property of the evidence that the MOUNT TRANSPORT cannot deliver.
+///
+/// Not a limitation of the readers, and not speculation: each variant below is
+/// backed by a measurement recorded in
+/// `docs/decisions/0011-macos-mounts-via-fuse-t-linkage.md`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TransportLoss {
+    /// Extended attributes never reach the filesystem layer at all.
+    ExtendedAttributes,
+    /// Ownership is replaced with the mounting user's uid/gid.
+    Ownership,
+}
+
+impl TransportLoss {
+    /// What is lost, in one line.
+    #[must_use]
+    pub fn what(self) -> &'static str {
+        match self {
+            Self::ExtendedAttributes => "extended attributes are not carried",
+            Self::Ownership => "file ownership (uid/gid) is replaced with the mounting user's",
+        }
+    }
+
+    /// How it was measured. A loss asserted without evidence is a rumour, and
+    /// this text is what lets a reader check the claim rather than trust it.
+    #[must_use]
+    pub fn evidence(self) -> &'static str {
+        match self {
+            Self::ExtendedAttributes => {
+                "a FUSE filesystem serving one known attribute was mounted through \
+                 this transport: 37 getattr calls arrived, 0 listxattr and 0 getxattr. \
+                 The client's request never reaches the filesystem, so nothing this \
+                 tool does can surface it. -o native_xattr and -o auto_xattr change \
+                 nothing (111 getattr, still 0). See examples/xattrfs.rs"
+            }
+            Self::Ownership => {
+                "every entry of three committed images was compared as the image \
+                 states it against the same entry stat'ed through the mount: uid 99 \
+                 read back as 501 and gid 99 as 20, the mounting user's. \
+                 See tests/nfs_semantics.rs"
+            }
+        }
+    }
+
+    /// The route that does NOT lose it.
+    ///
+    /// A warning that only says "this is broken" leaves an examiner stuck. Every
+    /// loss here has a lossless alternative, and naming it is the difference
+    /// between a caveat and an obstruction.
+    #[must_use]
+    pub fn lossless_route(self) -> &'static str {
+        match self {
+            // Only routes that were CHECKED. An earlier draft of this text
+            // pointed at `metadata/` for both; `metadata/` carries no xattr file
+            // at all, and timeline.jsonl is empty on an image whose reader emits
+            // no timeline events. A lossless route that does not exist is a
+            // worse failure than the loss it claims to answer.
+            Self::ExtendedAttributes => {
+                "forensic-vfs `data_streams` / `read_at(StreamId::Xattr(..))`, via the \
+                 library API. NOT available anywhere inside this mount"
+            }
+            Self::Ownership => {
+                "forensic-vfs `meta()` reports the image's own uid/gid. \
+                 `metadata/timeline.jsonl` also carries them per event, but only \
+                 where the reader emits timeline events"
+            }
+        }
+    }
+}
+
+/// What the transport this binary links cannot carry.
+///
+/// Empty for a transport with no measured losses. It is deliberately keyed on
+/// the LINKED library rather than on a runtime probe: the transport is fixed at
+/// link time, so this cannot drift from what the binary will actually do.
+#[must_use]
+pub fn transport_losses(linked_lib: &str) -> Vec<TransportLoss> {
+    if linked_lib == "fuse-t" {
+        // FUSE-T serves the mount as loopback NFS. Both losses below are
+        // properties of that round trip, measured on macOS 27.0 / FUSE-T 1.2.7.
+        vec![TransportLoss::ExtendedAttributes, TransportLoss::Ownership]
+    } else {
+        // macFUSE speaks the FUSE protocol natively and carries both. It is
+        // listed as lossless here on the STRENGTH OF THE PROTOCOL, not of a
+        // passing test: on macOS 26+ it cannot mount at all, so the claim is
+        // untested on this machine rather than verified. Nothing reaches this
+        // code path there, because the mount fails first.
+        Vec::new()
+    }
+}
+
+/// The mount-time fidelity notice, or `None` when the transport loses nothing.
+///
+/// Printed before the mount rather than after: an examiner who reads one line
+/// reads the first one, and a caveat that arrives after the data has been
+/// browsed has already failed.
+#[must_use]
+pub fn fidelity_notice(linked_lib: &str) -> Option<String> {
+    use std::fmt::Write as _;
+
+    let losses = transport_losses(linked_lib);
+    if losses.is_empty() {
+        return None;
+    }
+    let mut s = String::from(
+        "\nMOUNT FIDELITY -- this transport does not carry everything in the evidence.\n\n\
+         A file shown here with no extended attributes may HAVE them; the mount cannot\n\
+         tell you which. Treat absence seen through this mount as UNKNOWN, not as a\n\
+         finding about the evidence.\n\n",
+    );
+    for l in &losses {
+        let _ = write!(
+            s,
+            "  * {}\n      measured: {}\n      lossless: {}\n",
+            l.what(),
+            l.evidence(),
+            l.lossless_route()
+        );
+    }
+    let _ = write!(
+        s,
+        "\n  transport: {linked_lib}    full record: \
+         docs/decisions/0011-macos-mounts-via-fuse-t-linkage.md\n"
+    );
+    Some(s)
+}

@@ -186,6 +186,12 @@ fn main() {
         deleted_mode: cli.deleted,
     };
 
+    // BEFORE the mount, not after: an examiner who reads one line reads the
+    // first one, and a fidelity caveat that arrives once the data has been
+    // browsed has already failed at its job.
+    if let Some(notice) = forensic_mount::fuse_backend::fidelity_notice(env!("FUSE_LINKED_LIB")) {
+        eprintln!("{notice}");
+    }
     eprintln!("Mounting {image} at {mountpoint}");
     forensic_mount::mount(
         forensic_fs,
@@ -218,6 +224,9 @@ fn route_memory_mount(image: &str, mountpoint: &str, symbols: Option<&str>, daem
         // A memory dump exposes no deleted-file recovery surface.
         deleted_mode: forensic_mount::DeletedMode::Off,
     };
+    if let Some(notice) = forensic_mount::fuse_backend::fidelity_notice(env!("FUSE_LINKED_LIB")) {
+        eprintln!("{notice}");
+    }
     eprintln!("Mounting memory dump {image} at {mountpoint}");
     forensic_mount::mount(fs, std::path::Path::new(mountpoint), None, &options).unwrap_or_else(
         |e| {

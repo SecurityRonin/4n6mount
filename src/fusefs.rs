@@ -96,6 +96,14 @@ struct JournalTxnEntry {
 struct MetadataCache {
     superblock_json: Vec<u8>,
     timeline_jsonl: Vec<u8>,
+    /// What the MOUNT TRANSPORT cannot carry, recorded inside the mount itself.
+    ///
+    /// The mount-time warning goes to a terminal that scrolls away, and an
+    /// examiner who is handed a live mountpoint -- or who attaches to one a
+    /// colleague left up -- never saw it. A mount that silently omits evidence
+    /// is the failure this file exists to make impossible: the caveat travels
+    /// WITH the mount, not beside it.
+    mount_fidelity_json: Vec<u8>,
 }
 
 /// Cached entry for an unallocated block range visible in the `unallocated/` virtual directory.
@@ -386,6 +394,7 @@ impl ForensicFuseFs {
         *self.metadata_cache.borrow_mut() = Some(MetadataCache {
             superblock_json,
             timeline_jsonl,
+            mount_fidelity_json: build_mount_fidelity_json(),
         });
     }
 
@@ -718,6 +727,53 @@ fn filename_safe_utc(secs: i64) -> String {
     format!("{y:04}-{mon:02}-{d:02}T{h:02}-{m:02}-{s:02}Z")
 }
 
+/// Build `metadata/mount-fidelity.json`.
+///
+/// States what the linked transport cannot carry, with the measurement behind
+/// each claim, and says plainly that an absence observed through this mount is
+/// UNKNOWN rather than a finding. A lossless mount records that it is lossless;
+/// silence is what a lossy one must never be allowed to do.
+fn build_mount_fidelity_json() -> Vec<u8> {
+    use crate::fuse_backend::{transport_losses, TransportLoss};
+
+    let linked = option_env!("FUSE_LINKED_LIB").unwrap_or("macfuse");
+    let losses = transport_losses(linked);
+
+    let name = |l: TransportLoss| match l {
+        TransportLoss::ExtendedAttributes => "extended_attributes",
+        TransportLoss::Ownership => "ownership_uid_gid",
+    };
+
+    // Computed before the macro: `json!` takes expressions, and an if/else
+    // block inside it does not parse.
+    let how_to_read = if losses.is_empty() {
+        "This transport carries every property the readers expose. An absence seen \
+         through this mount reflects the evidence."
+    } else {
+        "This transport DROPS the properties listed below. An absence seen through \
+         this mount is UNKNOWN for those properties -- it is NOT a finding about \
+         the evidence. Use the lossless route given for each."
+    };
+
+    let doc = serde_json::json!({
+        "transport": linked,
+        "carries_everything": losses.is_empty(),
+        // Spelled out rather than left implicit: a consumer reading only this
+        // file must not have to infer what an empty list means.
+        "how_to_read_this": how_to_read,
+        "losses": losses.iter().map(|l| serde_json::json!({
+            "property": name(*l),
+            "what": l.what(),
+            "measured": l.evidence(),
+            "lossless_route": l.lossless_route(),
+        })).collect::<Vec<_>>(),
+        "record": "docs/decisions/0011-macos-mounts-via-fuse-t-linkage.md",
+    });
+    serde_json::to_string_pretty(&doc)
+        .unwrap_or_else(|_| "{}".to_string())
+        .into_bytes()
+}
+
 /// One `timeline.jsonl` row for a recovered deleted instance. Emitting one row
 /// per instance makes the timeline an all-versions event list: grep a name or
 /// path and every deleted version of it appears. `placement` marks in-place vs
@@ -876,6 +932,12 @@ impl Filesystem for ForensicFuseFs {
                 if name_bytes == b"superblock.json" {
                     let fuse_ino = metadata_ino(1);
                     let attr = virtual_file_attr(fuse_ino, mc.superblock_json.len() as u64);
+                    reply.entry(&TTL, &attr, 0);
+                    return;
+                }
+                if name_bytes == b"mount-fidelity.json" {
+                    let fuse_ino = metadata_ino(3);
+                    let attr = virtual_file_attr(fuse_ino, mc.mount_fidelity_json.len() as u64);
                     reply.entry(&TTL, &attr, 0);
                     return;
                 }
@@ -1115,6 +1177,12 @@ impl Filesystem for ForensicFuseFs {
                             reply.attr(
                                 &TTL,
                                 &virtual_file_attr(ino, mc.timeline_jsonl.len() as u64),
+                            );
+                        }
+                        3 => {
+                            reply.attr(
+                                &TTL,
+                                &virtual_file_attr(ino, mc.mount_fidelity_json.len() as u64),
                             );
                         }
                         100 => {
@@ -1509,6 +1577,11 @@ impl Filesystem for ForensicFuseFs {
                     FileType::RegularFile,
                     "timeline.jsonl".to_string(),
                 ));
+                entries.push((
+                    metadata_ino(3),
+                    FileType::RegularFile,
+                    "mount-fidelity.json".to_string(),
+                ));
             }
             for (i, (entry_ino, kind, name)) in entries.iter().enumerate().skip(offset) {
                 if reply.add(*entry_ino, (i + 1) as i64, *kind, name) {
@@ -1695,6 +1768,10 @@ impl Filesystem for ForensicFuseFs {
                     2 => {
                         let cache = self.metadata_cache.borrow();
                         cache.as_ref().map(|mc| mc.timeline_jsonl.clone())
+                    }
+                    3 => {
+                        let cache = self.metadata_cache.borrow();
+                        cache.as_ref().map(|mc| mc.mount_fidelity_json.clone())
                     }
                     100 => {
                         // session/status.json
