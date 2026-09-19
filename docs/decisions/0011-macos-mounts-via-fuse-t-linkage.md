@@ -311,3 +311,80 @@ fidelity we do not have. It stays green while the limitation is unchanged and
 goes red the moment it moves in either direction — a FUSE-T release that
 preserved ownership would fail here, and that failure is the news. A permanently
 red check trains readers to ignore it; a green one here would be a false claim.
+
+## Addendum: FSKit scoped (2026-09-20) — it IS the fix, and it is a build
+
+Scoped after FUSE-T was measured dropping extended attributes, which met this
+ADR's own revisit condition. Three questions, answered in order of what would
+kill the route fastest.
+
+### 1. Can FSKit carry what FUSE-T drops? YES — checked before costing anything
+
+The gating question, asked first precisely because assuming it is the mistake
+this ADR already records. Read from the macOS 27.0 SDK
+(`FSKit.framework/Versions/A/Headers`), not from memory:
+
+| loss | FSKit API |
+|---|---|
+| extended attributes | `FSVolumeXattrHandler` / `FSVolumeXattrOperations` — `getXattrNamed` is **`@required`**, plus `listXattrsOfItem`, `setXattr`, `maximumXattrSize` |
+| ownership | `FSItemAttributeUID`, `FSItemAttributeGID` |
+
+So FSKit is a genuine **fix**, not another mitigation — unlike FUSE-T, where the
+transport never issues the request at all.
+
+### 2. Can we get there via FUSE-T's own FSKit module? NO
+
+FUSE-T ships one — `org.fuset.fskit-srv.module(0.1.3)` at
+`/Applications/fuse-t.app/Contents/Extensions/FskitSrvModule.appex`, registered
+under `com.apple.fskit.fsmodule`, and its binary mentions xattr 25 times. That
+would have been a mount option instead of a build, so it was worth testing.
+
+It is not reachable from what we link:
+
+```text
+$ strings /usr/local/lib/libfuse-t.dylib | grep -ci fskit      -> 0
+$ strings /usr/local/lib/libfuse-t.dylib | grep -ci appex      -> 0
+  control: grep -c go-nfsv4 -> 1, grep -ci backend -> 2   (the instrument works)
+```
+
+`-o backend=fskit` fails to mount at all; `-o backend=local` mounts and still
+produces **0** xattr callbacks (32 getattr). The FSKit module is a separate
+product path at version 0.1.3 while the dylib is 1.2.7 — an early, parallel
+effort, not a switch on the libfuse API.
+
+### 3. What does building our own cost? The packaging objection STANDS
+
+Verified, not inherited:
+
+- **An `.appex` inside an app bundle.** Every real module on this machine is one
+  — Apple's `com.apple.fskit.{exfat,msdos,ftp}.appex` and FUSE-T's own. The
+  extension point is `com.apple.fskit.fsmodule`.
+- **macOS 15.4+** (`API_AVAILABLE(macos(15.4))`, with newer members at 26.0,
+  26.4, 27.0).
+- **Swift/ObjC**, so a Rust reader needs an FFI bridge or a Swift shim — a
+  second implementation language across a boundary.
+- **Code signing, notarization, and a user toggle** in System Settings.
+
+Against a tool that is one static binary installed with `cargo install` or
+`brew install`. That is the same objection
+[ADR-0014](../../../../docs/decisions/0014-fleet-gui-standard-egui.md) raises
+against Tauri.
+
+### Position
+
+**Not built, and the rejection is now narrower than before.** Previously FSKit
+was declined as an improvement not worth the packaging. It is now the only route
+to a mount that does not drop evidence on macOS, so the trade is real capability
+against real packaging cost — not polish against cost.
+
+Until it is built, the honest arrangement is what ships today:
+
+- the mount **declares** its losses, in the terminal and in
+  `metadata/mount-fidelity.json` (see `tests/mount_fidelity.rs`)
+- the **library API** (`forensic-vfs data_streams`) is the lossless route, and
+  is where the nine readers' extended-attribute work lands
+
+**Build it when** mount-based examination becomes the primary workflow for
+macOS evidence, or when an examiner needs attributes visible in a file browser
+rather than through the API. Both are product decisions, not engineering ones.
+
