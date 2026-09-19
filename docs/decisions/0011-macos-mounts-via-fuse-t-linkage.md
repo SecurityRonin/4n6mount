@@ -256,13 +256,50 @@ What remains, and what is genuinely below us:
   filesystem-internal directory. Whether to hide it is arguable; doing so
   *silently* is not.
 
-**Extended attributes are not carried at all, and NFS is not why.** The
-`ForensicFs` trait has no xattr method; `getxattr` serves synthetic values for
-deleted entries and returns `ENODATA` for real files. The readers have the data
-— `apfs-core` is Tier-1 validated on extended attributes — but it is not plumbed
-through `forensic-vfs` → `ForensicFs` → FUSE. On macOS that covers quarantine
-flags, Finder metadata and decmpfs. This is an architectural gap spanning repos,
-not a mount limitation.
+**Extended attributes are not carried at all, and NFS IS why.**
+
+*(Corrected 2026-09-19. This section previously read "and NFS is not why",
+blaming the gap entirely on unplumbed readers. That was wrong, and it was
+asserted without testing the transport — exactly the reading-capability-out-of-an-artifact
+error this ADR's method note warns about.)*
+
+FUSE-T **never issues xattr operations to the filesystem at all**. Measured with
+`examples/xattrfs.rs`, a minimal FUSE filesystem that serves one hard-coded
+attribute, mounted through FUSE-T:
+
+```text
+CALLBACK getattr(ino=1)      x37     <- the filesystem IS being driven
+CALLBACK listxattr           x0
+CALLBACK getxattr            x0
+$ xattr -p user.forensicprobe /mnt/probe.txt
+xattr: No such xattr: user.forensicprobe
+```
+
+The control is what makes this conclusive: 37 `getattr` calls prove the mount
+works and the callbacks are wired, while the xattr callbacks are never invoked.
+The client's request never reaches the filesystem, so no amount of reader or
+plumbing work can surface it.
+
+Re-tested with `-o native_xattr` (and `auto_xattr`, names the dylib accepts):
+111 `getattr` calls, still **zero** xattr callbacks. It is not a missing option.
+
+**Consequence: this ADR's own revisit condition is now met.** It said "revisit
+when a wrong timestamp or a dropped attribute reaches a report — that turns
+FSKit from an improvement into a correctness requirement". A dropped attribute
+is now measured as *structurally unavailable* on FUSE-T, not merely absent
+pending work.
+
+So the position is:
+
+| | |
+|---|---|
+| **programmatic / VFS access** | attributes ARE available — `forensic-vfs` models them as streams and the readers decode them (`apfs-core` Tier-1 validated) |
+| **through a FUSE-T mount** | attributes are UNREACHABLE, permanently, by the transport |
+
+Mount-based examination on macOS therefore cannot see extended attributes until
+either macFUSE's libfuse2 layer works again or FSKit is built. Work that needs
+them — quarantine flags, Finder metadata, decmpfs — must go through the library
+API rather than the mount.
 
 **Symlinks are wired** (`readlink` → `read_link`), though not yet covered by a
 differential test.
