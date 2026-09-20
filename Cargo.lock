@@ -199,17 +199,21 @@ checksum = "330a5ed07fa54e4702c9d6c4174f74427fc0ef6e214bbd677ae50a5099946470"
 [[package]]
 name = "apfs-core"
 version = "0.2.6"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6c5646c83cddb18f7abf571e50d53e238fabb496c1177517842a6ac0c47408e5"
 dependencies = [
+ "aes 0.8.4",
+ "aes-kw",
  "bitflags 2.13.1",
  "chrono",
  "flate2",
  "forensic-vfs",
  "forensicnomicon",
+ "hmac",
  "lzfse_rust",
  "lzvn-core",
+ "pbkdf2",
+ "sha2 0.10.9",
  "thiserror 2.0.19",
+ "xts-mode",
 ]
 
 [[package]]
@@ -540,8 +544,6 @@ dependencies = [
 [[package]]
 name = "btrfs-core"
 version = "0.1.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "63208ead51571d459b7cc55c2a8c92f0ae2b0e19db28d51af55e8ee77375cb14"
 dependencies = [
  "crc",
  "flate2",
@@ -1328,9 +1330,7 @@ dependencies = [
 
 [[package]]
 name = "ext4fs-core"
-version = "0.2.6"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2e36f645a667a404a42457a4c260d07514cbad80f7e828047b50f47074648ce3"
+version = "0.2.8"
 dependencies = [
  "bitflags 2.13.1",
  "blazehash-core",
@@ -1500,12 +1500,10 @@ dependencies = [
 
 [[package]]
 name = "forensic-vfs"
-version = "0.7.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "285cbb38f775a1c3c476e7e20bffea29eea6a62f73e0721957c04cb3867d1fa6"
+version = "0.7.3"
 dependencies = [
  "forensicnomicon-core",
- "state-history-forensic 0.1.0",
+ "state-history-forensic 0.2.2",
  "thiserror 2.0.19",
 ]
 
@@ -1828,9 +1826,7 @@ checksum = "7f24254aa9a54b5c858eaee2f5bccdb46aaf0e486a595ed5fd8f86ba55232a70"
 
 [[package]]
 name = "hfsplus-forensic"
-version = "0.2.5"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "848a6dde9d12a56380c693a5634cd0227002b3c3bb72fd6cd19e34723533ba8f"
+version = "0.2.8"
 dependencies = [
  "flate2",
  "forensic-vfs",
@@ -3907,19 +3903,16 @@ checksum = "b6f5e870be6c3b371b77fe0ee0bafb859fa4964b4404c27de1d380043c4dda20"
 
 [[package]]
 name = "udf-forensic"
-version = "0.2.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "68aea05386bb66b25769351fff7dc8f1524abb997a739f0d7607125c499d7398"
+version = "0.2.7"
 dependencies = [
  "forensic-vfs",
  "forensicnomicon",
+ "safe-read 0.1.0",
 ]
 
 [[package]]
 name = "ufs-core"
-version = "0.1.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c6eab6752a8a3d36b989028cafed17b935cf8fa2a1ccd70727c9001325ffdf54"
+version = "0.1.5"
 dependencies = [
  "forensic-vfs",
  "thiserror 2.0.19",
@@ -4751,9 +4744,7 @@ dependencies = [
 
 [[package]]
 name = "xfs-core"
-version = "0.1.5"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d0609f29548dfe6ce5c1e705e060fda05053bea7e577080a81bc21802b47f22f"
+version = "0.1.6"
 dependencies = [
  "crc",
  "forensic-vfs",
@@ -4922,8 +4913,6 @@ checksum = "e13c156562582aa81c60cb29407084cdb54c4164760106ab78e6c5b0858cf64e"
 [[package]]
 name = "zfs-forensic-core"
 version = "0.1.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0fe318f70e774a765d2016b8afba6b0e8fbe854a943bf59398fc7a93fba44de8"
 dependencies = [
  "flate2",
  "forensic-vfs",

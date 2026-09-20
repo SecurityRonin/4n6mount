@@ -153,3 +153,18 @@ assets = [
     ["README.md", "usr/share/doc/4n6mount/README.md", "644"],
     ["LICENSE", "usr/share/doc/4n6mount/LICENSE", "644"],
 ]
+
+# TEMPORARY -- remove once forensic-vfs 0.7.3 and the readers' xattr releases
+# are on crates.io. These point the whole graph at the merged local sources so
+# the end-to-end attribute chain (reader -> forensic-vfs -> engine -> ForensicFs
+# -> FUSE) can be PROVEN before anything is published, rather than after.
+[patch.crates-io]
+forensic-vfs     = { path = "../forensic-vfs/crates/core" }
+apfs-core        = { path = "../apfs-forensic/core" }
+hfsplus-forensic = { path = "../hfsplus-forensic" }
+ext4fs-core      = { path = "../ext4fs-forensic/core" }
+xfs-core         = { path = "../xfs-forensic/core" }
+btrfs-core       = { path = "../btrfs-forensic/core" }
+udf-forensic     = { path = "../udf-forensic" }
+ufs-core         = { path = "../ufs-forensic/core" }
+zfs-forensic-core = { path = "../zfs-forensic/core" }

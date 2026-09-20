@@ -16,15 +16,44 @@ use std::path::{Path, PathBuf};
 
 use forensic_mount::ForensicFs;
 
+/// The committed corpus, plus an image that actually CARRIES attributes.
+///
+/// The first three carry none — verified by scanning their bytes for any
+/// attribute name, which found nothing. That made this test permanently red for
+/// a reason unrelated to the passthrough: it asserted the path works using
+/// images with nothing to send down it. A test that cannot pass is not a
+/// finding about the code.
+///
+/// `hfs_xattr_volume.bin.gz` is the macOS-written HFS+ volume from
+/// `hfsplus-forensic` (its own driver wrote four attributes and read them back).
+/// Committed gzipped — 6 MB of mostly-zero volume is 7 KB — and decompressed to
+/// a temp file here because `open_image` takes a path.
 fn images() -> Vec<PathBuf> {
     let d = Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("tests")
         .join("data");
-    ["apfs.img", "hfsplus.img", "exfat.img"]
+    let mut out: Vec<PathBuf> = ["apfs.img", "hfsplus.img", "exfat.img"]
         .iter()
         .map(|n| d.join(n))
         .filter(|p| p.is_file())
-        .collect()
+        .collect();
+    if let Some(p) = xattr_volume() {
+        out.push(p);
+    }
+    out
+}
+
+/// Decompress the attribute-bearing volume to a temp file, returning its path.
+fn xattr_volume() -> Option<PathBuf> {
+    use std::io::Read as _;
+    let gz = include_bytes!("data/hfs_xattr_volume.bin.gz");
+    let mut raw = Vec::new();
+    flate2::read::GzDecoder::new(&gz[..])
+        .read_to_end(&mut raw)
+        .ok()?;
+    let p = std::env::temp_dir().join("4n6mount-xattr-volume.img");
+    std::fs::write(&p, &raw).ok()?;
+    Some(p)
 }
 
 /// RED: at least one file in the committed corpus must expose an extended
