@@ -161,10 +161,10 @@ assets = [
 [patch.crates-io]
 forensic-vfs     = { path = "../forensic-vfs/crates/core" }
 apfs-core        = { path = "../apfs-forensic/core" }
-hfsplus-forensic = { path = "../hfsplus-forensic" }
+hfsplus-forensic = { path = "../hfsplus-forensic/forensic" }
 ext4fs-core      = { path = "../ext4fs-forensic/core" }
 xfs-core         = { path = "../xfs-forensic/core" }
 btrfs-core       = { path = "../btrfs-forensic/core" }
-udf-forensic     = { path = "../udf-forensic" }
+udf-forensic     = { path = "../udf-forensic/forensic" }
 ufs-core         = { path = "../ufs-forensic/core" }
 zfs-forensic-core = { path = "../zfs-forensic/core" }
