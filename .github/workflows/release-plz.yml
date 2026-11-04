@@ -23,10 +23,23 @@ concurrency:
   group: release-plz-${{ github.ref }}
   cancel-in-progress: false
 
+# One reviewed decision ships every channel: when the release PR merges and
+# release-plz publishes `forensic-mount`, the release job also cuts the signed
+# `v{version}` tag that triggers release.yml (binaries, Homebrew, apt, winget).
+# Before this a human had to push that tag after every release, and the crate
+# and the binaries drifted apart. release-plz's own `<package>-v*` tags never
+# match release.yml's `v[0-9]*` trigger. A manual signed `v*` tag still works.
+
 jobs:
   release-plz-release:
     name: release-plz release
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+      # gitsign signs the binary-release tag keylessly with this job's OIDC
+      # identity (Sigstore) -- the fleet's CI-provenance signing mechanism.
+      id-token: write
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
         with:
@@ -38,12 +51,72 @@ jobs:
       # got the same step, so releases died in verification rather than in CI.
       - run: sudo apt-get update && sudo apt-get install -y libfuse3-dev pkg-config
       - name: release-plz release
+        id: release
         uses: release-plz/action@e8792575c7f2366cf6ff3ccc33ead9ace5b691c7 # v0.5.130
         with:
           command: release
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+      # Chain to release.yml. Runs only after a SUCCESSFUL publish (a failed
+      # publish fails the step above and stops the job), so binaries never ship
+      # ahead of the crate. `releases` is release-plz's `release -o json` array:
+      # {package_name, prs, tag, version}.
+      - name: Cut the signed binary-release tag
+        if: steps.release.outputs.releases_created == 'true'
+        env:
+          RELEASES: ${{ steps.release.outputs.releases }}
+          # Must be a PAT: a tag pushed with GITHUB_TOKEN does not trigger
+          # workflows (GitHub's recursion guard), so release.yml would never run.
+          TAG_PUSH_TOKEN: ${{ secrets.RELEASE_PLZ_TOKEN }}
+          GITSIGN_TOKEN_PROVIDER: github-actions
+          # Pinned by version AND digest; the digest equals the publisher's
+          # checksums.txt for this asset (verified 2026-11-03).
+          GITSIGN_VERSION: "0.18.0"
+          GITSIGN_SHA256: "2bc625472a08fea3bb6a57982c7d8b4978d1032251d305ceef3bf2ded0ca4483"
+        run: |
+          set -euo pipefail
+          rel=$(printf '%s' "$RELEASES" | jq -c '[.[] | select(.package_name == "forensic-mount")][0] // empty')
+          if [ -z "$rel" ]; then
+            echo "forensic-mount was not released this run -- no binary tag to cut"
+            exit 0
+          fi
+          ver=$(printf '%s' "$rel" | jq -r .version)
+          pkg_tag=$(printf '%s' "$rel" | jq -r .tag)
+          bin_tag="v$ver"
+          if [ -z "$TAG_PUSH_TOKEN" ]; then
+            echo "::error::RELEASE_PLZ_TOKEN is unset; a GITHUB_TOKEN tag push would not trigger release.yml. Push a signed $bin_tag by hand."
+            exit 1
+          fi
+          git fetch --force --tags origin
+          if git ls-remote --exit-code --tags origin "refs/tags/$bin_tag" >/dev/null; then
+            echo "$bin_tag already exists -- the binary release was already cut; nothing to do"
+            exit 0
+          fi
+          commit=$(git rev-list -n 1 "$pkg_tag")
+          echo "cutting $bin_tag at $commit (the commit release-plz released as $pkg_tag)"
+
+          curl -fsSL -o "$RUNNER_TEMP/gitsign" \
+            "https://github.com/sigstore/gitsign/releases/download/v${GITSIGN_VERSION}/gitsign_${GITSIGN_VERSION}_linux_amd64"
+          echo "${GITSIGN_SHA256}  $RUNNER_TEMP/gitsign" | sha256sum -c -
+          chmod +x "$RUNNER_TEMP/gitsign"
+          git config --local gpg.format x509
+          git config --local gpg.x509.program "$RUNNER_TEMP/gitsign"
+          git config --local user.name "github-actions[bot]"
+          git config --local user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          git tag -s -m "forensic-mount $bin_tag" "$bin_tag" "$commit"
+          # Verify the TAG's signature (not `gitsign verify <rev>`, which resolves
+          # a tag to its commit -- a GitHub-signed squash commit here). git
+          # verify-tag checks the signature cryptographically; it does not enforce
+          # certificate claims, so the signer identity is logged for the record.
+          git verify-tag -v "$bin_tag"
+
+          # checkout persisted GITHUB_TOKEN as an auth header for github.com,
+          # which would win over the PAT and make the push not trigger release.yml.
+          git config --local --unset-all http.https://github.com/.extraheader || true
+          git push "https://x-access-token:${TAG_PUSH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" "refs/tags/$bin_tag"
+          echo "pushed $bin_tag -> release.yml"
 
   release-plz-pr:
     name: release-plz PR

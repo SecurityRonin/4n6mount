@@ -224,9 +224,13 @@ jobs:
           path: debs
           merge-multiple: true
 
+      # cloudsmith-cli 1.16.0 pins mcp==1.9.1, which imports a pydantic internal
+      # (eval_type_backport) that current pydantic removed, so on a fresh runner
+      # the CLI dies at import. 1.30.1 pins mcp==2.3.0 and runs (checked on
+      # python:3.14-slim, 2026-11-04). Bump the pin, never the unpinned pydantic.
       - name: Install Cloudsmith CLI
         run: |
-          pip install --user cloudsmith-cli==1.16.0
+          pip install --user cloudsmith-cli==1.30.1
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
 
       - name: Push amd64 to Cloudsmith
