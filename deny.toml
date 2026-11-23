@@ -13,23 +13,7 @@ version = 2
 # stays correct if upstream fixes the gating. Verified against cargo-deny 0.19.0.
 unsound = "all"
 
-ignore = [
-    # RUSTSEC-2026-0002 (lru `IterMut` violates Stacked Borrows, patched in
-    # >= 0.16.3). Surfaced the moment `unsound = "all"` above made the gate
-    # capable of firing. NOT fixable from this repo: the affected lru 0.12.5
-    # arrives transitively as
-    #     lru 0.12.5 <- ewf 0.4.6 <- forensic-vfs-engine 0.1.7 <- forensic-mount
-    # and the published ewf 0.4.6 requires `lru = "0.12"`, a caret no downstream
-    # `cargo update` can cross. (memf-core, the repo's other lru consumer,
-    # already resolves the patched 0.16.4.)
-    #
-    # REMOVAL CONDITION — delete this entry, do not renew it: ewf-forensic's
-    # `fix/lru-unsoundness-rustsec-2026-0002` widens the caret to lru 0.18.1;
-    # once that merges and release-plz publishes ewf >= 0.4.8, run
-    # `cargo update -p ewf` here (forensic-vfs-engine 0.1.7 requires `ewf
-    # "0.4.1"`, so it needs no release of its own) and drop this line.
-    "RUSTSEC-2026-0002",
-]
+ignore = []
 
 [licenses]
 version = 2
